@@ -31,7 +31,7 @@ def create_servers(param):
         streamers.append(streamer)
     return streamers
 
-def feed_servers(param, streamers, cards_data, data_timestamp, timing_quality=0):
+def feed_servers(param, streamers, cards_data, data_timestamp, timing_quality=100):
     reorder_channels = param["Acquisition"]["asdf_settings"]["reorder_channels"]
     for card_nr in range(len(cards_data)):
         card_data = cards_data[card_nr]
