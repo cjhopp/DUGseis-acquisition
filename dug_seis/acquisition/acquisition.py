@@ -48,8 +48,8 @@ def acquisition_(param):
     # 0 = fastest, only zeroes used, will lead to high compression rate -> small files, low load
     # 4 = slow, all channels with sine, sawtooth and random data filled -> "worst cast data"
     param['Acquisition']['simulation_amount'] = 0
-    param['Acquisition']['asdf_settings']['reorder_channels'] = [1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16,
-                                               17, 25, 18, 26, 19, 27, 20, 28, 21, 29, 22, 30, 23, 31, 24, 32]
+    _apply_schema_defaults(param)
+    _validate_schema_lengths(param)
 
     _check_if_hardware_needs_to_be_simulated(param)
 
@@ -89,7 +89,8 @@ def _check_if_hardware_needs_to_be_simulated(param):
                         ' data this way. A computer without the acquisition hardware will detect the missing hardware'
                         ' and ask to change to the simulation mode automatically.')
     else:
-        if _check_if_hardware_driver_can_be_loaded():
+        expected_cards = param['Acquisition']['topology']['card_count']
+        if _check_if_hardware_driver_can_be_loaded(expected_cards):
             logger.info('Hardware driver found, running on real hardware')
         else:
             user_input = input("\nCould not load hardware driver, to simulate hardware press: enter or (y)es?")
@@ -101,7 +102,7 @@ def _check_if_hardware_needs_to_be_simulated(param):
                 return
 
 
-def _check_if_hardware_driver_can_be_loaded():
+def _check_if_hardware_driver_can_be_loaded(expected_cards=2):
     if os.name == 'nt':
         if os.path.isfile("c:\\windows\\system32\\spcm_win64.dll") or os.path.isfile(
                 "c:\\windows\\system32\\spcm_win32.dll"):
@@ -115,16 +116,86 @@ def _check_if_hardware_driver_can_be_loaded():
                 found_cards = 0
                 for line in file:
                     # print(line.rstrip("\n"))
-                    if line.__contains__('/dev/spcm0'):
-                        logger.info('/dev/spcm0 found.')
-                        found_cards = found_cards + 1
-                    if line.__contains__('/dev/spcm1'):
-                        logger.info('/dev/spcm1 found.')
+                    if '/dev/spcm' in line:
+                        logger.info(line.rstrip("\n"))
                         found_cards = found_cards + 1
                 file.close()
-                if found_cards > 0:
+                if found_cards >= expected_cards:
                     return True
+                logger.error('Found {} card device entries, expected at least {}'.format(found_cards, expected_cards))
     return False
+
+
+def _apply_schema_defaults(param):
+    acquisition = param.setdefault('Acquisition', {})
+    topology = acquisition.setdefault('topology', {})
+    output = acquisition.setdefault('output', {})
+    timing = acquisition.setdefault('timing', {})
+    hardware = acquisition.setdefault('hardware_settings', {})
+    channel_map = acquisition.setdefault('channel_map', {})
+    asdf_settings = acquisition.setdefault('asdf_settings', {})
+
+    topology.setdefault('card_count', 2)
+    topology.setdefault('channels_per_card', 16)
+    topology.setdefault('trigger_card_index', 1)
+    topology.setdefault('card_device_policy', 'fixed_order')
+    topology.setdefault('card_device_map', [])
+    topology.setdefault('card_serial_map', [])
+
+    output.setdefault('mode', 'both')
+    output.setdefault('enable_streaming', True)
+    output.setdefault('enable_asdf', True)
+    if output['mode'] not in ('both', 'streaming_only', 'asdf_only'):
+        raise ValueError('Acquisition.output.mode must be one of both, streaming_only, asdf_only')
+
+    hardware.setdefault('clock_source', 'external_sample_clock' if hardware.get('external_clock', False) else 'intpll')
+    hardware.setdefault('reference_clock_hz', int(hardware.get('sampling_frequency', 0)))
+    hardware.setdefault('clock_termination_50ohm', True)
+
+    timing.setdefault('timestamp_source', 'system_clock')
+    timing.setdefault('timing_quality_source', 'fixed')
+    timing.setdefault('timing_quality_fixed_value', 100)
+
+    total_channels = topology['card_count'] * topology['channels_per_card']
+
+    # Keep backward compatibility: use legacy asdf_settings.reorder_channels if provided.
+    if 'reorder_channels' not in channel_map:
+        legacy_reorder = asdf_settings.get('reorder_channels')
+        if legacy_reorder:
+            channel_map['reorder_channels'] = legacy_reorder
+        elif total_channels == 32 and topology['channels_per_card'] == 16:
+            channel_map['reorder_channels'] = [
+                1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16,
+                17, 25, 18, 26, 19, 27, 20, 28, 21, 29, 22, 30, 23, 31, 24, 32
+            ]
+        else:
+            channel_map['reorder_channels'] = list(range(1, total_channels + 1))
+
+    # Keep existing consumers working while we migrate to channel_map.
+    asdf_settings['reorder_channels'] = channel_map['reorder_channels']
+
+
+def _validate_schema_lengths(param):
+    topology = param['Acquisition']['topology']
+    total_channels = topology['card_count'] * topology['channels_per_card']
+    reorder = param['Acquisition']['channel_map']['reorder_channels']
+    sensor_codes = param['General']['stats']['sensor_codes']
+    input_range = param['Acquisition']['hardware_settings']['input_range']
+
+    if len(reorder) != total_channels:
+        raise ValueError('channel_map.reorder_channels length {} does not match total channels {}'.format(
+            len(reorder), total_channels))
+    if len(sensor_codes) != total_channels:
+        raise ValueError('General.stats.sensor_codes length {} does not match total channels {}'.format(
+            len(sensor_codes), total_channels))
+    if len(input_range) != total_channels:
+        raise ValueError('Acquisition.hardware_settings.input_range length {} does not match total channels {}'.format(
+            len(input_range), total_channels))
+
+    trigger_card_index = topology['trigger_card_index']
+    if trigger_card_index < 0 or trigger_card_index >= topology['card_count']:
+        raise ValueError('topology.trigger_card_index {} is outside [0, {}]'.format(
+            trigger_card_index, topology['card_count'] - 1))
 
 
 def _copy_config_file(param):

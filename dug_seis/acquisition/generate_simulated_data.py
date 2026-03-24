@@ -16,7 +16,7 @@ from ctypes import create_string_buffer
 
 logger = logging.getLogger('dug-seis')
 
-def generate_data_for_pv_buffer(size, amount, sampling_frequency):
+def generate_data_for_pv_buffer(size, amount, sampling_frequency, channels_per_card=16):
     """
     Generate simulated data in RAM.
 
@@ -56,21 +56,22 @@ def generate_data_for_pv_buffer(size, amount, sampling_frequency):
         # for j in range(0, 32, 2):
         #     channel_byte_offset = j
         channel_byte_offset = 0  # 0 is channel 0
-        for i in range(0 + channel_byte_offset, int(len(pv_buffer) * fill_percent / 100) + channel_byte_offset, 32):
-            value = int(sin(2*pi*i/32/sampling_frequency*sine_frequency) * 20000)
+        frame_stride = channels_per_card * 2
+        for i in range(0 + channel_byte_offset, int(len(pv_buffer) * fill_percent / 100) + channel_byte_offset, frame_stride):
+            value = int(sin(2*pi*i/frame_stride/sampling_frequency*sine_frequency) * 20000)
             pv_buffer[i] = value & 0xff
             pv_buffer[i + 1] = (value >> 8) & 0xff
             if time.time() > ts:
                 logger.info("channel 1 and 17 sine wave 20000 amplitude. i: {}, {}%".format(i, int(i / size * 100)))
                 ts = time.time() + 2
-        logger.info("channel 1 and 17 sine wave 1kHz, 20000 amplitude for {:.2f} sec.".format(len(pv_buffer) * fill_percent / 100 / sampling_frequency / 32))
+        logger.info("channel 1 and 17 sine wave 1kHz, 20000 amplitude for {:.2f} sec.".format(len(pv_buffer) * fill_percent / 100 / sampling_frequency / frame_stride))
 
     if amount > 1:
         # 2byte offset = next channel, reordering leads to channel 002
         # something changed its 4bytes now?
         channel_byte_offset = 4
         value = 0
-        for i in range(0 + channel_byte_offset, int(len(pv_buffer) * fill_percent / 100) + channel_byte_offset, 32):
+        for i in range(0 + channel_byte_offset, int(len(pv_buffer) * fill_percent / 100) + channel_byte_offset, frame_stride):
             pv_buffer[i] = value & 0xff
             pv_buffer[i + 1] = (value >> 8) & 0xff
             value += 1
@@ -80,7 +81,7 @@ def generate_data_for_pv_buffer(size, amount, sampling_frequency):
 
     if amount > 2:
         channel_byte_offset = 8
-        for i in range(0 + channel_byte_offset, int(len(pv_buffer) * fill_percent / 100) + channel_byte_offset, 32):
+        for i in range(0 + channel_byte_offset, int(len(pv_buffer) * fill_percent / 100) + channel_byte_offset, frame_stride):
             value = int(sin(i / 1100000 * 1000) * 32768)
             pv_buffer[i] = value & 0xff
             pv_buffer[i + 1] = (value >> 8) & 0xff

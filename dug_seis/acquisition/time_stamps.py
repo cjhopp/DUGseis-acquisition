@@ -23,6 +23,7 @@ class TimeStamps:
 
         self._starttime_ns = None
         self._last_used_julian_day = -1
+        self._timestamp_source = param['Acquisition'].get('timing', {}).get('timestamp_source', 'system_clock')
 
         self._delta = 1/param['Acquisition']['hardware_settings']['sampling_frequency']
         self._file_length_in_samples = int(param['Acquisition']['asdf_settings']['file_length_sec'] *
@@ -30,7 +31,11 @@ class TimeStamps:
 
     def set_starttime_now(self):
         """Sets the start of the acquisition to the current PC time. Subtracts the pre-trigger."""
-        starttime_now = UTCDateTime().ns
+        if self._timestamp_source == 'ptp_system_clock':
+            # Uses the host UTC clock that should be PTP-disciplined by the OS.
+            starttime_now = UTCDateTime().ns
+        else:
+            starttime_now = UTCDateTime().ns
         # samples pre-trigger from start time in seconds
         self._starttime_ns = round(starttime_now, -9) - int((4 * self._delta * 10**9))  # balance 4
 

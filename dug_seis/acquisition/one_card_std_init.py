@@ -47,6 +47,10 @@ def sz_type_to_name(l_card_type):
         s_name = 'M4i.%04x-x8' % l_version
     elif (l_card_type & regs.TYP_SERIESMASK) == regs.TYP_M4XEXPSERIES:
         s_name = 'M4x.%04x-x4' % l_version
+    elif (l_card_type & regs.TYP_SERIESMASK) == regs.TYP_M2PEXPSERIES:
+        s_name = 'M2p.%04x-x4' % l_version
+    elif hasattr(regs, 'TYP_M5IEXPSERIES') and (l_card_type & regs.TYP_SERIESMASK) == regs.TYP_M5IEXPSERIES:
+        s_name = 'M5i.%04x-x16' % l_version
     else:
         s_name = 'unknown type'
     return s_name
@@ -61,17 +65,30 @@ def init_card(param, card_nr):
     l_notify_size_stream = c_int32(param['Acquisition']['bytes_per_stream_packet'])
     timeout = param['Acquisition']['hardware_settings']['timeout']
     wait_for_trigger = param['Acquisition']['hardware_settings']['wait_for_trigger']
-    external_clock = param['Acquisition']['hardware_settings']['external_clock']
+    hardware_settings = param['Acquisition']['hardware_settings']
+    topology = param['Acquisition']['topology']
+    channels_per_card = topology['channels_per_card']
+    trigger_card_index = topology['trigger_card_index']
+    clock_source = hardware_settings.get('clock_source')
+    reference_clock_hz = hardware_settings.get('reference_clock_hz', sampling_frequency)
+    clock_termination_50ohm = 1 if hardware_settings.get('clock_termination_50ohm', True) else 0
+
+    # Backward compatibility with legacy boolean key.
+    if clock_source is None:
+        clock_source = 'external_sample_clock' if param['Acquisition']['hardware_settings'].get('external_clock', False) else 'intpll'
 
     input_range_sorted = param['Acquisition']['hardware_settings']['input_range_sorted']
 
     """ open card """
-    if card_nr == 0:
-        h_card = spcm_hOpen(create_string_buffer(b'/dev/spcm0'))
-        input_range_this_card = input_range_sorted[0:16]
+    device_map = topology.get('card_device_map', [])
+    if card_nr < len(device_map):
+        device_path = device_map[card_nr]
     else:
-        h_card = spcm_hOpen(create_string_buffer(b'/dev/spcm1'))
-        input_range_this_card = input_range_sorted[16:32]
+        device_path = '/dev/spcm{}'.format(card_nr)
+    h_card = spcm_hOpen(create_string_buffer(device_path.encode('ascii')))
+    start = card_nr * channels_per_card
+    end = (card_nr + 1) * channels_per_card
+    input_range_this_card = input_range_sorted[start:end]
     if h_card is None:
         logger.error("card {} not found...".format(card_nr))
         return -1
@@ -95,7 +112,8 @@ def init_card(param, card_nr):
     """ do a simple FIFO setup """
 
     # all channels enabled (must be 1, 2, 4, 8, 16)
-    spcm_dwSetParam_i32(h_card, regs.SPC_CHENABLE,       0xFFFF)
+    channel_enable_mask = (1 << channels_per_card) - 1
+    spcm_dwSetParam_i32(h_card, regs.SPC_CHENABLE,       channel_enable_mask)
 
     # ? of pre-trigger data at start of FIFO mode (must be reduced with more channels, see manual for limits)
     spcm_dwSetParam_i32(h_card, regs.SPC_PRETRIGGER,     4)
@@ -115,7 +133,7 @@ def init_card(param, card_nr):
     # spcm_dwSetParam_i32(h_card, regs.SPC_TRIG_ORMASK,    regs.SPC_TMASK_SOFTWARE)
 
     # trigger set to XIO0 of card with star hub
-    if card_nr == 1:
+    if card_nr == trigger_card_index:
         # spcm_dwSetParam_i32(h_card, regs.SPC_TRIG_ORMASK,    regs.SPC_TMASK_XIO0)
         # spcm_dwSetParam_i32(h_card, regs.SPC_TRIG_XIO0_MODE, regs.SPC_TM_POS)
         if wait_for_trigger:
@@ -130,9 +148,12 @@ def init_card(param, card_nr):
     spcm_dwSetParam_i32(h_card, regs.SPC_TRIG_ANDMASK,   0)
 
     # clock mode
-    if external_clock:
+    if clock_source == 'external_sample_clock':
         spcm_dwSetParam_i32(h_card, regs.SPC_CLOCKMODE, regs.SPC_CM_EXTERNAL)
-        spcm_dwSetParam_i32(h_card, regs.SPC_CLOCK50OHM, 1)  # Enables the 50 Ohm input termination
+        spcm_dwSetParam_i32(h_card, regs.SPC_CLOCK50OHM, clock_termination_50ohm)
+    elif clock_source == 'external_reference_clock':
+        spcm_dwSetParam_i32(h_card, regs.SPC_CLOCKMODE, regs.SPC_CM_EXTREFCLOCK)
+        spcm_dwSetParam_i32(h_card, regs.SPC_REFERENCECLOCK, int(reference_clock_hz))
     else:
         spcm_dwSetParam_i32(h_card, regs.SPC_CLOCKMODE, regs.SPC_CM_INTPLL)
 
@@ -166,7 +187,7 @@ def init_card(param, card_nr):
 
     # set input range 50, 100, 250, 500, 1000, 2000, 5000, 10000 mV
     selected_range = c_int32(0)
-    for i in range(16):
+    for i in range(channels_per_card):
         spcm_dwSetParam_i32(h_card, regs.SPC_AMP0 + i * 100, input_range_this_card[i])
 
         spcm_dwGetParam_i32(h_card, regs.SPC_AMP0 + i * 100, byref(selected_range))

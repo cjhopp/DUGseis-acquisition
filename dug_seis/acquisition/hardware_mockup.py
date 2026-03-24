@@ -24,19 +24,24 @@ class SimulatedHardware:
         self._bytes_per_transfer = param['Acquisition']['bytes_per_transfer']
         self._ram_buffer_size = param['Acquisition']['hardware_settings']['ram_buffer_size']
         self._sampling_frequency = param['Acquisition']['hardware_settings']['sampling_frequency']
+        self._channels_per_card = param['Acquisition']['topology']['channels_per_card']
 
-        self._pv_buffer = generate_data_for_pv_buffer(self._ram_buffer_size, param['Acquisition']['simulation_amount'], self._sampling_frequency)
+        self._pv_buffer = generate_data_for_pv_buffer(
+            self._ram_buffer_size,
+            param['Acquisition']['simulation_amount'],
+            self._sampling_frequency,
+            self._channels_per_card)
         self._l_pc_pos = 0
         self._timestamp_last_call = time.time()
         # nr of channels & 16 bit = 2 bytes
-        self._nr_of_datapoints = floor(param['Acquisition']['bytes_per_transfer'] / 16 / 2)
+        self._nr_of_datapoints = floor(param['Acquisition']['bytes_per_transfer'] / self._channels_per_card / 2)
 
     def _simulated_nr_of_bytes_available(self):
         # add data, might be more than a transfer can handle
         # self.bytes_available += random.randrange(0, int(self._bytes_per_transfer*1.5))
 
-        # 16 channels, 16 bit = 2 bytes, per sample
-        self.bytes_available += int((time.time() - self._timestamp_last_call) * self._sampling_frequency * 16 * 2)
+        # channels_per_card channels, 16 bit = 2 bytes, per sample
+        self.bytes_available += int((time.time() - self._timestamp_last_call) * self._sampling_frequency * self._channels_per_card * 2)
         self._timestamp_last_call = time.time()
 
         # print("SimulatedHardware, bytes_available: {}".format(self.bytes_available))
@@ -45,9 +50,10 @@ class SimulatedHardware:
     def _simulated_read_buffer_position(self):
         return self._l_pc_pos
 
-    def _simulated_data_has_been_read(self):
-        self.bytes_available -= self._bytes_per_transfer
-        self._l_pc_pos += self._bytes_per_transfer
+    def _simulated_data_has_been_read(self, bytes_read=None):
+        read_size = self._bytes_per_transfer if bytes_read is None else bytes_read
+        self.bytes_available -= read_size
+        self._l_pc_pos += read_size
         if self._l_pc_pos == self._ram_buffer_size:
             self._l_pc_pos = 0
         if self._l_pc_pos > self._ram_buffer_size:

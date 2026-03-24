@@ -33,12 +33,16 @@ def create_servers(param):
 
 def feed_servers(param, streamers, cards_data, data_timestamp, timing_quality=100):
     reorder_channels = param["Acquisition"]["asdf_settings"]["reorder_channels"]
+    channels_per_card = param["Acquisition"]["topology"]["channels_per_card"]
+    if timing_quality is None:
+        timing_cfg = param["Acquisition"].get("timing", {})
+        timing_quality = int(timing_cfg.get("timing_quality_fixed_value", 100))
     for card_nr in range(len(cards_data)):
         card_data = cards_data[card_nr]
-        num_samps = int(card_data.size / 16)
-        for i in range(16):
+        num_samps = int(card_data.size / channels_per_card)
+        for i in range(channels_per_card):
             samples = card_data[i, 0:num_samps]
-            ch_id = reorder_channels[ i + 16 * card_nr ]
+            ch_id = reorder_channels[i + channels_per_card * card_nr]
             for streamer in streamers:
                 if ch_id in streamer.channels:
                     streamer.feed_data(ch_id, data_timestamp,timing_quality, samples)

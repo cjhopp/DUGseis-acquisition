@@ -29,8 +29,9 @@ class DataToASDF:
 
     def __init__(self, param):
         self._sampling_rate = param['Acquisition']['hardware_settings']['sampling_frequency']
+        self._channels_per_card = param['Acquisition']['topology']['channels_per_card']
 
-        _nr_of_data_points = floor(c_int32(param['Acquisition']['bytes_per_transfer']).value / 16 / 2)  # nr of channels & 16 bit = 2 bytes
+        _nr_of_data_points = floor(c_int32(param['Acquisition']['bytes_per_transfer']).value / self._channels_per_card / 2)
         self.file_length_in_samples = int(param['Acquisition']['asdf_settings']['file_length_sec'] * self._sampling_rate)
         if self.file_length_in_samples < _nr_of_data_points:
             logger.error('file_length_sec cannot be shorter than one buffer transfer: {} seconds'
@@ -73,7 +74,7 @@ class DataToASDF:
         card_nr = 0
         for np_data in np_data_list:
 
-            for i in range(16):
+            for i in range(self._channels_per_card):
 
                 if self.stats_handling.set_sensor_code(card_nr, i):
                     stream += Trace(np_data[i, start_sample:end_sample], header=self.stats_handling.get_stats())
@@ -94,7 +95,7 @@ class DataToASDF:
             np_data_list: the array of data. formatted from the spectrum cards.
         """
 
-        nr_of_new_datapoints = int(np_data_list[0].size / 16)
+        nr_of_new_datapoints = int(np_data_list[0].size / self._channels_per_card)
         self._data_points_since_start += nr_of_new_datapoints
         if self.file_length_in_samples - self._data_points_in_this_file >= nr_of_new_datapoints:
             # logger.info("data fits in file")

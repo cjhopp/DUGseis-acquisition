@@ -53,6 +53,8 @@ class Card:
         self.ram_buffer_size = param['Acquisition']['hardware_settings']['ram_buffer_size']
         self.card_nr = card_nr
         self.h_card = None
+        self.channels_per_card = param['Acquisition']['topology']['channels_per_card']
+        self.card_count = param['Acquisition']['topology']['card_count']
 
         self.debug_buffer_behaviour = False
 
@@ -61,18 +63,17 @@ class Card:
         # self._nr_of_datapoints = floor(param['Acquisition']['bytes_per_transfer'] / 16 / 2)
 
         input_range_sorted = param['Acquisition']['hardware_settings']['input_range_sorted']
-        if card_nr == 0:
-            self.scaling_this_card = [i * 2 / 65536 for i in input_range_sorted[0:16]]   # e.g. 16 bit to +- 10'000 mV
-        else:
-            self.scaling_this_card = [i * 2 / 65536 for i in input_range_sorted[16:32]]
+        start = card_nr * self.channels_per_card
+        end = (card_nr + 1) * self.channels_per_card
+        self.scaling_this_card = [i * 2 / 65536 for i in input_range_sorted[start:end]]
 
     def init_card(self, param):
         """Initialise card. Setup card parameters. Reserve buffers for DMA data transfer."""
         logger.info("init card: {}".format(self.card_nr))
-        if self.card_nr == 0 or self.card_nr == 1:
+        if 0 <= self.card_nr < self.card_count:
             self.h_card, self._pv_buffer = sdt_init_card(param, self.card_nr)
         else:
-            logger.error("card_nr needs to be 0 or 1, received:{}".format(self.card_nr))
+            logger.error("card_nr needs to be in [0, {}], received:{}".format(self.card_count - 1, self.card_nr))
 
     def print_settings(self):
         """print selected voltage range."""
@@ -133,7 +134,7 @@ class Card:
             bytes_offset: bytes left out from the start of the buffer.
         """
         # cast to pointer to 16bit integer
-        nr_of_datapoints = int(bytes_per_transfer / 16 / 2)
+        nr_of_datapoints = int(bytes_per_transfer / self.channels_per_card / 2)
         # logger.info("read_data: {} Mb".format((self.read_buffer_position() + bytes_offset)/1024/1024))
         if self.read_buffer_position() + bytes_offset >= self.ram_buffer_size:
             # logger.info("wrap around, bytes_offset % ram_buffer_size: {} Mb"
@@ -142,14 +143,15 @@ class Card:
         else:
             offset = self.read_buffer_position() + bytes_offset
         x = cast(addressof(self._pv_buffer) + offset, POINTER(c_int16))
-        np_data = np.ctypeslib.as_array(x, shape=(nr_of_datapoints, 16)).T
+        np_data = np.ctypeslib.as_array(x, shape=(nr_of_datapoints, self.channels_per_card)).T
         return np_data
 
-    def data_has_been_read(self):
+    def data_has_been_read(self, bytes_read=None):
         """Mark buffer space as available again."""
+        notify_size = self.l_notify_size if bytes_read is None else c_int32(bytes_read)
         if self.debug_buffer_behaviour is True:
-            print("mark buffer as available: {0:08x}".format(self.l_notify_size.value))
-        spcm_dwSetParam_i32(self.h_card, regs.SPC_DATA_AVAIL_CARD_LEN, self.l_notify_size)
+            print("mark buffer as available: {0:08x}".format(notify_size.value))
+        spcm_dwSetParam_i32(self.h_card, regs.SPC_DATA_AVAIL_CARD_LEN, notify_size)
 
     def stop_recording(self):
         """Send the stop command to the card."""

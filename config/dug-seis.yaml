@@ -26,10 +26,35 @@ General:
                                  'XB.0X.29.001', 'XB.0X.30.001', 'XB.0X.31.001', 'XB.0X.32.001']
 
 Acquisition:
+  topology:
+    card_count               : 2
+    channels_per_card        : 16
+    trigger_card_index       : 1
+    card_device_policy       : fixed_order   # fixed_order or serial_map
+    card_device_map          : []            # e.g. ['/dev/spcm0', '/dev/spcm1']
+    card_serial_map          : []            # optional, used with serial_map policy
+
+  output:
+    mode                     : both          # streaming_only, asdf_only, both
+    enable_streaming         : true
+    enable_asdf              : true
+
+  timing:
+    timestamp_source         : system_clock  # system_clock or ptp_system_clock
+    timing_quality_source    : fixed         # fixed or ptp_status
+    timing_quality_fixed_value: 100
+
+  channel_map:
+    reorder_channels         : [1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15, 8, 16,
+                                17, 25, 18, 26, 19, 27, 20, 28, 21, 29, 22, 30, 23, 31, 24, 32]
+
   hardware_settings:
     # vertical_resolution       : 16 # bit
     wait_for_trigger          : true
     external_clock            : true
+    clock_source              : external_sample_clock  # intpll, external_sample_clock, external_reference_clock
+    reference_clock_hz        : 200000
+    clock_termination_50ohm   : true
     sampling_frequency        : 200000
     input_range: [10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000,
                   10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000,
