@@ -1,0 +1,1 @@
+"""DUG Seis acquisition package."""

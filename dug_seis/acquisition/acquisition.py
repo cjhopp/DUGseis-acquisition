@@ -10,6 +10,7 @@ Acquisition module of DUG-Seis.
 import logging
 import dug_seis.acquisition.card_manager as card_manager
 import os.path
+import glob
 import shutil
 import socket
 
@@ -123,6 +124,16 @@ def _check_if_hardware_driver_can_be_loaded(expected_cards=2):
                 if found_cards >= expected_cards:
                     return True
                 logger.error('Found {} card device entries, expected at least {}'.format(found_cards, expected_cards))
+        else:
+            # Some Spectrum driver installations do not expose /proc/spcm_cards.
+            # Fall back to checking for device nodes directly.
+            dev_nodes = sorted(glob.glob('/dev/spcm*'))
+            logger.info('/proc/spcm_cards missing, fallback detected {} Spectrum device nodes'.format(len(dev_nodes)))
+            for node in dev_nodes:
+                logger.info('found device node: {}'.format(node))
+            if len(dev_nodes) >= expected_cards:
+                return True
+            logger.error('Found {} /dev/spcm* device nodes, expected at least {}'.format(len(dev_nodes), expected_cards))
     return False
 
 
@@ -138,9 +149,11 @@ def _apply_schema_defaults(param):
     topology.setdefault('card_count', 2)
     topology.setdefault('channels_per_card', 16)
     topology.setdefault('trigger_card_index', 1)
+    topology.setdefault('sync_strategy', 'star_hub')
     topology.setdefault('card_device_policy', 'fixed_order')
     topology.setdefault('card_device_map', [])
     topology.setdefault('card_serial_map', [])
+    topology.setdefault('device_scan_limit', max(topology['card_count'] * 2, 16))
 
     output.setdefault('mode', 'both')
     output.setdefault('enable_streaming', True)
@@ -197,6 +210,16 @@ def _validate_schema_lengths(param):
         raise ValueError('topology.trigger_card_index {} is outside [0, {}]'.format(
             trigger_card_index, topology['card_count'] - 1))
 
+    sync_strategy = topology.get('sync_strategy', 'star_hub')
+    if sync_strategy not in ('star_hub', 'none'):
+        raise ValueError('topology.sync_strategy must be star_hub or none')
+
+    card_device_policy = topology.get('card_device_policy', 'fixed_order')
+    if card_device_policy not in ('fixed_order', 'serial_map'):
+        raise ValueError('topology.card_device_policy must be fixed_order or serial_map')
+    if card_device_policy == 'serial_map' and len(topology.get('card_serial_map', [])) < topology['card_count']:
+        raise ValueError('topology.card_serial_map must contain at least card_count entries when using serial_map policy')
+
 
 def _copy_config_file(param):
     _folder = param['General']['acquisition_folder']
@@ -211,14 +234,19 @@ def _copy_config_file(param):
     if not os.path.isdir(_folder):
         os.makedirs(_folder)
         logger.info("creating folder: {}".format(_folder))
-    if os.path.isfile('./dug-seis.yaml'):
+    cfg_meta = param.get('_meta', {})
+    source_cfg = cfg_meta.get('config_path')
+    if source_cfg and os.path.isfile(source_cfg):
+        logger.info("copying {} to {}".format(source_cfg, _folder_file))
+        shutil.copyfile(source_cfg, _folder_file)
+    elif os.path.isfile('./dug-seis.yaml'):
         logger.info("copying ./dug-seis.yaml to {}".format(_folder_file))
         shutil.copyfile('./dug-seis.yaml', _folder_file)
     elif os.path.isfile('./config/dug-seis.yaml'):
         logger.info("copying ./config/dug-seis.yaml to {}".format(_folder_file))
         shutil.copyfile('./config/dug-seis.yaml', _folder_file)
     else:
-        logger.error("could not find ./dug-seis.yaml or ./config/dug-seis.yaml")
+        logger.error("could not find source config file to copy")
 
 
 def _write_used_param_to_log_recursive(param_dict):
@@ -242,5 +270,4 @@ def _sorted_input_ranges(param):
     #     input_range_sorted[int(x)-1] = (input_range[ch_nr])
     #     # logger.info('x: {}'.format( int(x) ))
     #     ch_nr = ch_nr+1
-    input_range_sorted = input_range
     return input_range_sorted

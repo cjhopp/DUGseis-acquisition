@@ -25,7 +25,7 @@ from ctypes import byref, c_int32, POINTER, c_int16, cast, addressof, cdll
 
 if os.path.isfile("c:\\windows\\system32\\spcm_win64.dll") or os.path.isfile(
         "c:\\windows\\system32\\spcm_win32.dll"):
-    from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card
+    from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card, pre_open_card as sdt_pre_open_card
     from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_vClose
 else:
     pass
@@ -35,7 +35,7 @@ else:
 if os.name == 'posix':
     try:
         spcmDll = cdll.LoadLibrary("libspcm_linux.so")
-        from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card
+        from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card, pre_open_card as sdt_pre_open_card
         from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_vClose
     except OSError as exception:
         print("linux card driver could not be loaded.")
@@ -53,6 +53,9 @@ class Card:
         self.ram_buffer_size = param['Acquisition']['hardware_settings']['ram_buffer_size']
         self.card_nr = card_nr
         self.h_card = None
+        self.device_path = None
+        self.serial_number = None
+        self.has_starhub_feature = None
         self.channels_per_card = param['Acquisition']['topology']['channels_per_card']
         self.card_count = param['Acquisition']['topology']['card_count']
 
@@ -67,11 +70,41 @@ class Card:
         end = (card_nr + 1) * self.channels_per_card
         self.scaling_this_card = [i * 2 / 65536 for i in input_range_sorted[start:end]]
 
+    def pre_open(self, param):
+        """Open card handle and read identity info without FIFO/DMA setup.
+
+        Must be called for all cards before StarHub.open_sync_handle(), after which
+        init_card() will complete the FIFO/DMA configuration using the open handle.
+        This matches the Spectrum example's init ordering.
+        """
+        logger.info("pre-open card: {}".format(self.card_nr))
+        if 0 <= self.card_nr < self.card_count:
+            result = sdt_pre_open_card(param, self.card_nr)
+            if result == -1:
+                raise RuntimeError("Card {} pre-open failed".format(self.card_nr))
+            self.h_card, self.device_path, self.serial_number, self.has_starhub_feature = result
+        else:
+            logger.error("card_nr needs to be in [0, {}], received:{}".format(self.card_count - 1, self.card_nr))
+
     def init_card(self, param):
         """Initialise card. Setup card parameters. Reserve buffers for DMA data transfer."""
         logger.info("init card: {}".format(self.card_nr))
         if 0 <= self.card_nr < self.card_count:
-            self.h_card, self._pv_buffer = sdt_init_card(param, self.card_nr)
+            # Pass pre-opened handle if available (from pre_open()), so sync can be opened
+            # between the open and FIFO-setup phases (Spectrum example ordering).
+            result = sdt_init_card(param, self.card_nr,
+                                   h_card=self.h_card, device_path=self.device_path)
+            if result == -1:
+                raise RuntimeError("Card {} initialization failed".format(self.card_nr))
+            if isinstance(result, tuple) and len(result) == 5:
+                self.h_card, self._pv_buffer, self.device_path, self.serial_number, self.has_starhub_feature = result
+            elif isinstance(result, tuple) and len(result) == 4:
+                self.h_card, self._pv_buffer, self.device_path, self.serial_number = result
+            elif isinstance(result, tuple) and len(result) == 2:
+                self.h_card, self._pv_buffer = result
+            else:
+                raise RuntimeError(
+                    "Unexpected init_card() return for card {}: {}".format(self.card_nr, type(result)))
         else:
             logger.error("card_nr needs to be in [0, {}], received:{}".format(self.card_count - 1, self.card_nr))
 
@@ -157,6 +190,18 @@ class Card:
         """Send the stop command to the card."""
         logger.info("card {0} stopped.".format(self.card_nr))
         spcm_dwSetParam_i32(self.h_card, regs.SPC_M2CMD, regs.M2CMD_CARD_STOP | regs.M2CMD_DATA_STOPDMA)
+
+    def start_recording(self):
+        """Start recording and DMA for this card."""
+        dw_error = spcm_dwSetParam_i32(
+            self.h_card,
+            regs.SPC_M2CMD,
+            regs.M2CMD_CARD_START | regs.M2CMD_CARD_ENABLETRIGGER | regs.M2CMD_DATA_STARTDMA,
+        )
+        if dw_error != err.ERR_OK:
+            logger.error("card {} start failed with error {}".format(self.card_nr, dw_error))
+            return -1
+        return 0
 
     def close(self):
         """Close the handle to the card."""

@@ -30,6 +30,19 @@ import dug_seis.acquisition.streaming as streaming
 logger = logging.getLogger('dug-seis')
 
 
+def _log_card_mapping_table(cards):
+    logger.info('Card mapping table:')
+    logger.info('{:>6} | {:>10} | {:<16}'.format('index', 'serial', 'device'))
+    logger.info('{:->6}-+-{:->10}-+-{:->16}'.format('', '', ''))
+    for card in cards:
+        serial = getattr(card, 'serial_number', None)
+        device = getattr(card, 'device_path', None)
+        logger.info('{:>6} | {:>10} | {:<16}'.format(
+            card.card_nr,
+            'n/a' if serial is None else str(serial),
+            'n/a' if device is None else str(device)))
+
+
 def run(param):
     """
     Main acquisition loop, run's until ctrl + c.
@@ -44,6 +57,8 @@ def run(param):
     card_count = topology['card_count']
     trigger_card_index = topology['trigger_card_index']
     channels_per_card = topology['channels_per_card']
+    sync_strategy = topology.get('sync_strategy', 'star_hub')
+    wait_for_trigger = param['Acquisition']['hardware_settings']['wait_for_trigger']
 
     mode = output_cfg.get('mode', 'both')
     enable_streaming = output_cfg.get('enable_streaming', True) and mode in ('both', 'streaming_only')
@@ -67,9 +82,44 @@ def run(param):
     star_hub.close()
 
     # init setup
+    if sync_strategy == 'star_hub':
+        # Spectrum example ordering: open ALL card handles first, THEN open sync handle,
+        # THEN do FIFO/DMA setup.  The driver requires at least one card handle (especially
+        # the carrier) to be open before the sync virtual device becomes accessible.
+        for card in cards:
+            card.pre_open(param)
+        star_hub.open_sync_handle()
+
     for card in cards:
         card.init_card(param)
-    star_hub.init_star_hub(cards)
+    _log_card_mapping_table(cards)
+    if sync_strategy == 'star_hub':
+        init_attempts = int(topology.get('star_hub_init_retries', 3))
+        init_attempts = max(1, init_attempts)
+        init_ok = False
+        sampling_frequency = param['Acquisition']['hardware_settings']['sampling_frequency']
+        for attempt in range(1, init_attempts + 1):
+            if star_hub.init_star_hub(cards, sampling_frequency) != -1:
+                init_ok = True
+                break
+            logger.warning('Star Hub initialization attempt {}/{} failed'.format(attempt, init_attempts))
+            star_hub.close()
+            if attempt < init_attempts:
+                time.sleep(0.5)
+
+        if not init_ok:
+            for card in cards:
+                card.close()
+            star_hub.close()
+            raise RuntimeError('Star Hub initialization failed after {} attempts. Acquisition aborted to avoid running with no synchronized data.'.format(init_attempts))
+
+        if star_hub.clock_master_index is not None and trigger_card_index != star_hub.clock_master_index:
+            logger.warning(
+                'Configured trigger_card_index ({}) differs from Star Hub clock master index ({}). '
+                'This may be intentional, but verify your timing/trigger topology.'.format(
+                    trigger_card_index, star_hub.clock_master_index))
+    else:
+        logger.warning('topology.sync_strategy is set to none: cards will start without Star Hub synchronization')
 
     # read xio, for testing purpose, enable inputs in one_card_std_init.py
     # while True:
@@ -77,7 +127,19 @@ def run(param):
     #    time.sleep(0.1)
 
     # start
-    star_hub.start()
+    if sync_strategy == 'star_hub':
+        if star_hub.start() == -1:
+            for card in cards:
+                card.close()
+            star_hub.close()
+            raise RuntimeError('Star Hub start failed. Acquisition aborted to avoid streaming with no payload.')
+    else:
+        for card in cards:
+            if card.start_recording() == -1:
+                for c in cards:
+                    c.close()
+                star_hub.close()
+                raise RuntimeError('Card {} start failed while sync_strategy is none'.format(card.card_nr))
     data_to_asdf = DataToASDF(param) if enable_asdf else None
     stream_ts = TimeStamps(param)
     if data_to_asdf and data_to_asdf.error:
@@ -105,9 +167,12 @@ def run(param):
 
     time_stamp_this_loop = time.perf_counter()
 
-    logger.info("Setup complete, waiting for Trigger...")
-    while not cards[trigger_card_index].trigger_received():
-        pass
+    if wait_for_trigger:
+        logger.info("Setup complete, waiting for Trigger...")
+        while not cards[trigger_card_index].trigger_received():
+            pass
+    else:
+        logger.info("Setup complete, trigger wait disabled.")
 
     if data_to_asdf:
         data_to_asdf.set_starttime_now()
@@ -119,6 +184,10 @@ def run(param):
 
     logger.info("Acquisition started...")
 
+    # Streaming diagnostics: emit a compact status line at most once per second
+    # to show whether any card is preventing the min-bytes gate from opening.
+    last_stream_diag_log = 0.0
+
     try:
         while True:
             #
@@ -126,6 +195,14 @@ def run(param):
             #
             bytes_available = [card.nr_of_bytes_available() for card in cards]
             min_bytes_available = min(bytes_available)
+
+            now_diag = time.perf_counter()
+            if now_diag - last_stream_diag_log >= 1.0:
+                logger.info(
+                    "stream-diag bytes_available={} min={} threshold={} bytes_streamed={}"
+                    .format(bytes_available, min_bytes_available, bytes_per_stream_packet, bytes_streamed)
+                )
+                last_stream_diag_log = now_diag
 
             #
             # handle streaming: send data packets until all the available bytes

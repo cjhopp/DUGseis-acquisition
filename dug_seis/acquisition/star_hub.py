@@ -18,7 +18,9 @@ stop and synchronise the cards.
 """
 import logging
 import os.path
+import time
 import dug_seis.acquisition.hardware_driver.regs as regs
+import dug_seis.acquisition.hardware_driver.spcerr as spcerr
 
 from ctypes import create_string_buffer, byref
 
@@ -38,6 +40,7 @@ if os.name == 'posix':
         spcmDll = cdll.LoadLibrary("libspcm_linux.so")
         from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card
         from dug_seis.acquisition.hardware_driver.pyspcm import spcm_hOpen, spcm_dwSetParam_i32, spcm_dwGetParam_i32
+        from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i64, spcm_dwGetParam_i64
         from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwGetErrorInfo_i32, spcm_vClose
     except OSError as exception:
         print("linux card driver could not be loaded.")
@@ -50,18 +53,60 @@ class StarHub:
     def __init__(self):
 
         self.h_sync = None
+        self.clock_master_index = None
 
-    def init_star_hub(self, card_list):
+    def open_sync_handle(self):
+        if self.h_sync:
+            return 0
+
+        sync_paths = (b'sync0', b'/dev/sync0', b'sync1')
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            for sync_path in sync_paths:
+                h_try = spcm_hOpen(create_string_buffer(sync_path))
+                logger.info(
+                    "star-hub handler for {} (attempt {}/{}): {}".format(
+                        sync_path.decode('ascii'), attempt + 1, max_attempts, h_try
+                    )
+                )
+                if h_try:
+                    self.h_sync = h_try
+                    logger.info("Using star-hub sync handle path: {}".format(sync_path.decode('ascii')))
+                    return 0
+            time.sleep(0.2)
+
+        logger.error("Could not open star-hub (tried sync0, /dev/sync0, sync1 with retries)...")
+        return -1
+
+    def _detect_starhub_carrier(self, card_list):
+        i = 0
+        for one_card in card_list:
+            serial = getattr(one_card, 'serial_number', None)
+            has_feature = getattr(one_card, 'has_starhub_feature', None)
+            logger.info("checking card nr {0:d} for star hub. card serial:{1} has_starhub_feature:{2}".format(
+                i,
+                'n/a' if serial is None else serial,
+                has_feature,
+            ))
+
+            if has_feature is True:
+                logger.info("Star hub found on card nr:{}, serial:{}".format(i, serial))
+                return i
+            i += 1
+
+        logger.warning("No star hub carrier card feature detected while selecting clock master")
+        return None
+
+    def init_star_hub(self, card_list, sampling_frequency=None):
         """Initialise the star hub."""
         logger.info("init star hub")
 
-        # open handle for star-hub
-        self.h_sync = spcm_hOpen(create_string_buffer(b'sync0'))
+        self.clock_master_index = self._detect_starhub_carrier(card_list)
+        if self.clock_master_index is None:
+            return -1
 
-        logger.info("star-hub handler:{0}".format(self.h_sync))
-
-        if self.h_sync is None:
-            logger.error("Could not open star-hub...")
+        # open handle for star-hub (or reuse pre-opened handle)
+        if self.open_sync_handle() == -1:
             return -1
 
         # check sync count
@@ -84,38 +129,39 @@ class StarHub:
             sz_error_text_buffer = create_string_buffer(regs.ERRORTEXTLEN)
             spcm_dwGetErrorInfo_i32(self.h_sync, None, None, sz_error_text_buffer)
             logger.error("Setting setting synchronisation mask to star hub failed. sz_error_text_buffer.value: {0}".format(sz_error_text_buffer.value))
+            return -1
 
-        # find star-hub carrier card and set it as clock master
-        i = 0
-        for one_card in card_list:
-            l_features = c_int32(0)
-            spcm_dwGetParam_i32(one_card.h_card, regs.SPC_PCIFEATURES, byref(l_features))
-            logger.info("features of card {}: {}".format(i, l_features))
+        spcm_dwGetParam_i32(self.h_sync, regs.SPC_SYNC_READ_SYNCCOUNT, byref(l_sync_count))
+        if l_sync_count.value <= 0:
+            logger.error('Star Hub reports zero synchronized cards after enable mask setup')
+            return -1
 
-            l_serial_number = c_int32(0)
-            spcm_dwGetParam_i32(one_card.h_card, regs.SPC_PCISERIALNO, byref(l_serial_number))
-            logger.info("checking card nr {0:d} for star hub. card serial:{1}\n".format(i, l_serial_number.value))
-
-            if l_features.value & (regs.SPCM_FEAT_STARHUB5 | regs.SPCM_FEAT_STARHUB16):
-                logger.info("Star hub found on card nr:{}, serial:{}".format(i, l_serial_number.value))
-                break
-            i += 1
-
-        dw_error = spcm_dwSetParam_i32(self.h_sync, regs.SPC_SYNC_CLKMASK, (1 << i))
+        dw_error = spcm_dwSetParam_i32(self.h_sync, regs.SPC_SYNC_CLKMASK, (1 << self.clock_master_index))
         if dw_error != 0:  # != ERR_OK
             sz_error_text_buffer = create_string_buffer(regs.ERRORTEXTLEN)
             spcm_dwGetErrorInfo_i32(self.h_sync, None, None, sz_error_text_buffer)
             logger.error("Setting setting clock master to star hub failed. sz_error_text_buffer.value: {0}".format(sz_error_text_buffer.value))
+            return -1
 
     def start(self):
         """Start all cards using the star-hub handle."""
         dw_error = spcm_dwSetParam_i32(self.h_sync, regs.SPC_M2CMD,
                                        regs.M2CMD_CARD_START | regs.M2CMD_CARD_ENABLETRIGGER | regs.M2CMD_DATA_STARTDMA)
-        if dw_error != 0:  # != ERR_OK
-            sz_error_text_buffer = create_string_buffer(regs.ERRORTEXTLEN)
-            spcm_dwGetErrorInfo_i32(self.h_sync, None, None, sz_error_text_buffer)
-            logger.error("Start of starhub failed. sz_error_text_buffer.value: {0}".format(sz_error_text_buffer.value))
-            return -1
+        if dw_error == spcerr.ERR_OK:
+            logger.info("Star hub start: OK")
+            return 0
+
+        # ERR_LASTERR means the command was accepted but the result is in the error register.
+        # If the last error is ERR_OK, the start actually succeeded.
+        sz_error_text_buffer = create_string_buffer(regs.ERRORTEXTLEN)
+        spcm_dwGetErrorInfo_i32(self.h_sync, None, None, sz_error_text_buffer)
+        if dw_error == spcerr.ERR_LASTERR and b'no error' in sz_error_text_buffer.value.lower():
+            logger.info("Star hub start: OK (ERR_LASTERR / no error)")
+            return 0
+
+        logger.error("Start of starhub failed (dw_error={}). sz_error_text_buffer.value: {}".format(
+            dw_error, sz_error_text_buffer.value))
+        return -1
 
     def close(self):
         """Close the star hub."""

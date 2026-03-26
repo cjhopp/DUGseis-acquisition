@@ -18,6 +18,7 @@ import datetime
 import numpy as np
 from logging.handlers import RotatingFileHandler
 from dug_seis.acquisition.acquisition import acquisition_ as acquisition_function
+from dug_seis.acquisition.sync_self_test import run_sync_self_test
 # from dug_seis.processing.processing import processing as processing_function
 # from dug_seis.merge import merge as merge_function
 # from dug_seis.visualization.dashboard import dashboard as dashboard_function
@@ -81,6 +82,7 @@ def cli(ctx, cfg, verbose, mode, log):
             logger.error(f'Configuration Version is {param["Version"]} but it must be {CONFIG_VERSION}')
             exit(-1)
     param['General']['mode'] = mode
+    param.setdefault('_meta', {})['config_path'] = os.path.abspath(cfg_path)
     ctx.obj = {
         'param': param
     }
@@ -140,3 +142,13 @@ def dashboard(ctx):
     """
     param = ctx.obj['param']
     dashboard_function(param)
+
+
+@cli.command(name='sync-self-test')
+@click.pass_context
+def sync_self_test(ctx):
+    """Run Star Hub/sync diagnostics without starting acquisition."""
+    param = ctx.obj['param']
+    rc = run_sync_self_test(param)
+    if rc != 0:
+        raise SystemExit(rc)
