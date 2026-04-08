@@ -152,3 +152,40 @@ def sync_self_test(ctx):
     rc = run_sync_self_test(param)
     if rc != 0:
         raise SystemExit(rc)
+
+
+@cli.command(name='write-file')
+@click.option('--duration', required=True, type=float, metavar='<seconds>',
+              help='Recording duration in seconds')
+@click.option('--out', default=None, metavar='<dir>',
+              help='Output directory (default: current working directory)')
+@click.pass_context
+def write_file(ctx, duration, out):
+    """Record all channels for a fixed duration and write to a .npz file.
+
+    Useful for channel mapping tests or any scenario where you need a simple
+    file dump without the full acquisition pipeline (no ASDF, no streaming).
+    """
+    import os
+    from dug_seis.acquisition.acquisition import (
+        _apply_schema_defaults,
+        _validate_schema_lengths,
+        _check_if_hardware_needs_to_be_simulated,
+        _sorted_input_ranges,
+    )
+    from dug_seis.acquisition.write_file import run_write_file
+
+    param = ctx.obj['param']
+    param['Acquisition']['simulation_mode'] = False
+    param['Acquisition']['bytes_per_stream_packet'] = 1 * 1024 * 1024
+    param['Acquisition']['bytes_per_transfer'] = 32 * 1024 * 1024
+    param['Acquisition']['hardware_settings']['ram_buffer_size'] = 128 * 1024 * 1024
+    param['Acquisition']['hardware_settings']['timeout'] = 8000
+    param['Acquisition']['simulation_amount'] = 0
+    _apply_schema_defaults(param)
+    _validate_schema_lengths(param)
+    _check_if_hardware_needs_to_be_simulated(param)
+    param['Acquisition']['hardware_settings']['input_range_sorted'] = _sorted_input_ranges(param)
+
+    out_dir = out or os.getcwd()
+    run_write_file(param, duration, out_dir)
