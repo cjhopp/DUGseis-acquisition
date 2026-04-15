@@ -180,6 +180,7 @@ def run(param):
     else:
         stream_ts.set_starttime_now()
     bytes_streamed = 0
+    packets_sent = 0
     t_stream = 0
 
     logger.info("Acquisition started...")
@@ -199,8 +200,9 @@ def run(param):
             now_diag = time.perf_counter()
             if now_diag - last_stream_diag_log >= 1.0:
                 logger.info(
-                    "stream-diag bytes_available={} min={} threshold={} bytes_streamed={}"
-                    .format(bytes_available, min_bytes_available, bytes_per_stream_packet, bytes_streamed)
+                    "stream-diag bytes_available={} min={} threshold={} packets_sent={} stream_ts={}"
+                    .format(bytes_available, min_bytes_available, bytes_per_stream_packet,
+                            packets_sent, stream_ts.starttime_UTCDateTime())
                 )
                 last_stream_diag_log = now_diag
 
@@ -217,6 +219,7 @@ def run(param):
                         streaming.feed_servers(param, servers, cards_data, stream_ts.starttime_UTCDateTime(), timing_quality)
                         stream_ts.set_starttime_next_segment(int(cards_data[0].size / channels_per_card))
                         bytes_streamed += bytes_per_stream_packet
+                        packets_sent += 1
 
                         t_stream += time.perf_counter() - _tref
                 else:
@@ -226,6 +229,7 @@ def run(param):
                         cards_data = [card.read_data(bytes_per_stream_packet, 0) for card in cards]
                         streaming.feed_servers(param, servers, cards_data, stream_ts.starttime_UTCDateTime(), timing_quality)
                         stream_ts.set_starttime_next_segment(int(cards_data[0].size / channels_per_card))
+                        packets_sent += 1
                         for card in cards:
                             card.data_has_been_read(bytes_per_stream_packet)
                         min_bytes_available -= bytes_per_stream_packet
