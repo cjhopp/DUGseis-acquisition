@@ -310,6 +310,28 @@ def init_card(param, card_nr, h_card=None, device_path=None):
 #    spcm_dwSetParam_i32(h_card, regs.SPC_CLOCKMODE, regs.SPC_CM_EXTERNAL)
     # spcm_dwSetParam_i32(h_card, regs.SPC_EXTERNALCLOCK, 1)
 
+    # --- Hardware timestamp engine (refclock / PPS mode) ---
+    # Configure on every card when enabled — the StarHub clock master is only known
+    # after star_hub.init_star_hub(), which runs after init_card(). Configuring all
+    # cards is harmless; only the master (whose X1 receives the PPS) will produce
+    # valid timestamps, and only it will have pps_sync() / read_pps_start_time() called.
+    hw_ts = param['Acquisition'].get('timing', {}).get('hardware_timestamps', {})
+    if hw_ts.get('enabled', False):
+        ts_timeout_ms = int(hw_ts.get('pps_sync_timeout_ms', 1500))
+        ts_mode = regs.SPC_TSMODE_STANDARD | regs.SPC_TSCNT_REFCLOCKPOS
+        dw_error = spcm_dwSetParam_i32(h_card, regs.SPC_TIMESTAMP_CMD, ts_mode)
+        if dw_error != spcerr.ERR_OK:
+            sz_error_text_buffer = create_string_buffer(regs.ERRORTEXTLEN)
+            spcm_dwGetErrorInfo_i32(h_card, None, None, sz_error_text_buffer)
+            logger.error("card {}: SPC_TIMESTAMP_CMD mode 0x{:x} error: {}".format(
+                card_nr, ts_mode, sz_error_text_buffer.value))
+        else:
+            logger.info("card {}: timestamp engine configured: mode=0x{:x} (STANDARD|REFCLOCKPOS)".format(
+                card_nr, ts_mode))
+
+        spcm_dwSetParam_i32(h_card, regs.SPC_TIMESTAMP_TIMEOUT, ts_timeout_ms)
+        logger.info("card {}: timestamp PPS sync timeout set to {} ms".format(card_nr, ts_timeout_ms))
+
     # set sample rate (SPC_SAMPLERATE is a 64-bit register — use i64 variant)
     spcm_dwSetParam_i64(h_card, regs.SPC_SAMPLERATE, sampling_frequency)
     logger.info("using: {0} sps".format(sampling_frequency))

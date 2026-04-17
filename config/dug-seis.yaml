@@ -53,6 +53,10 @@ Acquisition:
     timestamp_source         : system_clock  # system_clock or ptp_system_clock
     timing_quality_source    : fixed         # fixed or ptp_status
     timing_quality_fixed_value: 100
+    hardware_timestamps:
+      enabled                : false         # Enable Spectrum refclock timestamp engine
+      pps_sync_timeout_ms    : 1500          # How long to wait for first PPS edge at startup
+      # The PPS-receiving card is auto-detected as the StarHub clock master.
 
   channel_map:
     reorder_channels         : [1, 2, 3, 4, 5, 6, 7, 8,

@@ -26,6 +26,7 @@ from dug_seis.acquisition.time_stamps import TimeStamps
 from dug_seis.acquisition.hardware_mockup import SimulatedHardware
 
 import dug_seis.acquisition.streaming as streaming
+from dug_seis.acquisition.pps_time_correction import pps_registers_to_ns
 
 logger = logging.getLogger('dug-seis')
 
@@ -126,6 +127,31 @@ def run(param):
     #    logger.info("xio l_data, card1: {0:b}, card2: {1:b}".format(card1.read_xio(), card2.read_xio()))
     #    time.sleep(0.1)
 
+    # --- PPS sync: block until the next PPS edge so the timestamp engine
+    #     latches the PC clock at that exact moment. ---
+    hw_ts_cfg = timing_cfg.get('hardware_timestamps', {})
+    pps_enabled = hw_ts_cfg.get('enabled', False) and not simulation_mode
+    pps_starttime_ns = None
+    if pps_enabled:
+        if sync_strategy == 'star_hub':
+            pps_card_index = star_hub.clock_master_index
+            if pps_card_index is None:
+                logger.error("PPS enabled but StarHub clock master was not detected — skipping PPS sync")
+                pps_card_index = -1
+            else:
+                logger.info("PPS sync: using StarHub clock master card {} (X1 MMCX)".format(pps_card_index))
+        else:
+            # No StarHub — fall back to card 0
+            pps_card_index = 0
+            logger.warning("PPS enabled with sync_strategy=none: using card 0 as PPS card")
+        if pps_card_index >= 0:
+            pps_card = cards[pps_card_index]
+            if pps_card.pps_sync() == 0:
+                raw_date, raw_time = pps_card.read_pps_start_time()
+                pps_starttime_ns = pps_registers_to_ns(raw_date, raw_time)
+            else:
+                logger.warning("PPS sync failed — falling back to PC system clock for start time")
+
     # start
     if sync_strategy == 'star_hub':
         if star_hub.start() == -1:
@@ -179,6 +205,15 @@ def run(param):
         stream_ts = copy.copy(data_to_asdf.time_stamps)
     else:
         stream_ts.set_starttime_now()
+
+    # Override the PC-clock start time with the PPS-synced value if available.
+    if pps_starttime_ns is not None:
+        if data_to_asdf:
+            data_to_asdf.time_stamps.correct_starttime(pps_starttime_ns)
+            stream_ts = copy.copy(data_to_asdf.time_stamps)
+        else:
+            stream_ts.correct_starttime(pps_starttime_ns)
+
     bytes_streamed = 0
     packets_sent = 0
     t_stream = 0

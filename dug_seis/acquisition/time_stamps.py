@@ -82,3 +82,16 @@ class TimeStamps:
             """
         self._starttime_ns = self._starttime_ns + int(nr_of_datapoints * (self._delta * 10 ** 9))
         # logger.info("time delta between files in ns = {0}".format(int(nr_of_datapoints * (self._delta * 10 ** 9))))
+
+    def correct_starttime(self, corrected_ns):
+        """Replace the current start time with a hardware-derived PPS value.
+
+        Args:
+            corrected_ns: Nanosecond epoch from the PPS-synced timestamp engine.
+        """
+        old_ns = self._starttime_ns
+        self._starttime_ns = corrected_ns
+        diff_ms = (corrected_ns - old_ns) / 1_000_000 if old_ns is not None else float('nan')
+        logger.info("Start time corrected by PPS: {} -> {} (delta {:.1f} ms)".format(
+            UTCDateTime(ns=old_ns) if old_ns else 'None',
+            UTCDateTime(ns=corrected_ns), diff_ms))

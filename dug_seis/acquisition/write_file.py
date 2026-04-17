@@ -37,6 +37,7 @@ from obspy.core import UTCDateTime
 from dug_seis.acquisition.hardware_mockup import SimulatedHardware
 from dug_seis.acquisition.one_card import Card
 from dug_seis.acquisition.star_hub import StarHub
+from dug_seis.acquisition.pps_time_correction import pps_registers_to_ns
 
 logger = logging.getLogger('dug-seis')
 
@@ -92,6 +93,11 @@ def run_write_file(param, duration_sec, out_dir):
         card.init_card(param)
     _log_card_table(cards)
 
+    # --- PPS config (used below, after init but before start) ---
+    hw_ts_cfg = param['Acquisition'].get('timing', {}).get('hardware_timestamps', {})
+    pps_enabled = hw_ts_cfg.get('enabled', False) and not simulation_mode
+    pps_starttime_ns = None
+
     if sync_strategy == 'star_hub':
         init_attempts = max(1, int(topology.get('star_hub_init_retries', 3)))
         init_ok = False
@@ -109,6 +115,20 @@ def run_write_file(param, duration_sec, out_dir):
             star_hub.close()
             raise RuntimeError('Star Hub init failed after {} attempts'.format(init_attempts))
 
+        # --- PPS sync (before start) ---
+        if pps_enabled:
+            pps_card_index = star_hub.clock_master_index
+            if pps_card_index is None:
+                logger.error("PPS enabled but StarHub clock master was not detected — skipping PPS sync")
+            else:
+                logger.info("PPS sync: using StarHub clock master card {} (X1 MMCX)".format(pps_card_index))
+                pps_card = cards[pps_card_index]
+                if pps_card.pps_sync() == 0:
+                    raw_date, raw_time = pps_card.read_pps_start_time()
+                    pps_starttime_ns = pps_registers_to_ns(raw_date, raw_time)
+                else:
+                    logger.warning("PPS sync failed — falling back to PC system clock")
+
         if star_hub.start() == -1:
             for card in cards:
                 card.close()
@@ -116,6 +136,15 @@ def run_write_file(param, duration_sec, out_dir):
             raise RuntimeError('Star Hub start failed')
     else:
         logger.warning('sync_strategy is none: starting cards individually without star hub')
+        # PPS sync for non-starhub
+        if pps_enabled:
+            # No StarHub — fall back to card 0
+            logger.warning("PPS enabled with sync_strategy=none: using card 0 as PPS card")
+            if cards[0].pps_sync() == 0:
+                raw_date, raw_time = cards[0].read_pps_start_time()
+                pps_starttime_ns = pps_registers_to_ns(raw_date, raw_time)
+            else:
+                logger.warning("PPS sync failed — falling back to PC system clock")
         for card in cards:
             if card.start_recording() == -1:
                 for c in cards:
@@ -135,6 +164,9 @@ def run_write_file(param, duration_sec, out_dir):
 
     # --- Finite collection loop ---
     starttime = UTCDateTime()
+    if pps_enabled and pps_starttime_ns is not None:
+        starttime = UTCDateTime(ns=pps_starttime_ns)
+        logger.info('write-file: using PPS-synced start time {}'.format(starttime))
     chunks_per_card = [[] for _ in range(card_count)]
     try:
         for chunk_i in range(n_chunks):
@@ -196,6 +228,7 @@ def run_write_file(param, duration_sec, out_dir):
 
     sidecar = {
         'starttime': str(starttime),
+        'pps_synced': pps_enabled and pps_starttime_ns is not None,
         'sampling_frequency_hz': sampling_freq,
         'duration_requested_sec': duration_sec,
         'actual_duration_sec': float(ordered_data.shape[1]) / sampling_freq,

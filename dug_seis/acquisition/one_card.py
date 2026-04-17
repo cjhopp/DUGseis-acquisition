@@ -21,12 +21,12 @@ import os.path
 import dug_seis.acquisition.hardware_driver.regs as regs
 import dug_seis.acquisition.hardware_driver.spcerr as err
 
-from ctypes import byref, c_int32, POINTER, c_int16, cast, addressof, cdll
+from ctypes import byref, c_int32, c_int64, POINTER, c_int16, cast, addressof, cdll
 
 if os.path.isfile("c:\\windows\\system32\\spcm_win64.dll") or os.path.isfile(
         "c:\\windows\\system32\\spcm_win32.dll"):
     from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card, pre_open_card as sdt_pre_open_card
-    from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_vClose
+    from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_dwGetParam_i64, spcm_vClose
 else:
     pass
     # logging at import messes with the later logging settings, no logging needed here
@@ -36,7 +36,7 @@ if os.name == 'posix':
     try:
         spcmDll = cdll.LoadLibrary("libspcm_linux.so")
         from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card, pre_open_card as sdt_pre_open_card
-        from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_vClose
+        from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_dwGetParam_i64, spcm_vClose
     except OSError as exception:
         print("linux card driver could not be loaded.")
         print(exception)
@@ -208,3 +208,53 @@ class Card:
         if self.h_card is not None:
             spcm_vClose(self.h_card)
             logger.info("card {0} closed.".format(self.card_nr))
+
+    # --- PPS / hardware timestamp methods ---
+
+    def pps_sync(self):
+        """Issue SPC_TS_RESET_WAITREFCLK to block until the next PPS edge.
+
+        The Spectrum driver latches the PC system clock at the PPS edge and stores
+        it in SPC_TIMESTAMP_STARTDATE / SPC_TIMESTAMP_STARTTIME.  The timestamp
+        engine mode must already be configured (done in init_card via
+        one_card_std_init).
+
+        Returns 0 on success, -1 on error/timeout.
+        """
+        logger.info("card {}: waiting for PPS edge (SPC_TS_RESET_WAITREFCLK)...".format(self.card_nr))
+        dw_error = spcm_dwSetParam_i32(
+            self.h_card, regs.SPC_TIMESTAMP_CMD, regs.SPC_TS_RESET_WAITREFCLK)
+        if dw_error != err.ERR_OK:
+            logger.error("card {}: SPC_TS_RESET_WAITREFCLK failed with error 0x{:04x}".format(
+                self.card_nr, dw_error))
+            return -1
+        logger.info("card {}: PPS sync completed".format(self.card_nr))
+        return 0
+
+    def read_pps_start_time(self):
+        """Read the hardware-latched start date and time after a PPS sync.
+
+        Returns (startdate, starttime) as raw 32-bit integers, or (None, None) on error.
+        Spectrum encoding:
+          - SPC_TIMESTAMP_STARTDATE: YYYYMMDD integer (e.g. 20260408)
+          - SPC_TIMESTAMP_STARTTIME: seconds since midnight * 1000 (millisecond resolution)
+        """
+        l_date = c_int32(0)
+        l_time = c_int32(0)
+        spcm_dwGetParam_i32(self.h_card, regs.SPC_TIMESTAMP_STARTDATE, byref(l_date))
+        spcm_dwGetParam_i32(self.h_card, regs.SPC_TIMESTAMP_STARTTIME, byref(l_time))
+        logger.info("card {}: SPC_TIMESTAMP_STARTDATE={} SPC_TIMESTAMP_STARTTIME={}".format(
+            self.card_nr, l_date.value, l_time.value))
+        return l_date.value, l_time.value
+
+    def read_timestamp_count(self):
+        """Return the number of timestamps currently in the timestamp FIFO."""
+        l_count = c_int32(0)
+        spcm_dwGetParam_i32(self.h_card, regs.SPC_TIMESTAMP_COUNT, byref(l_count))
+        return l_count.value
+
+    def read_timestamp_status(self):
+        """Return the raw SPC_TIMESTAMP_STATUS register value."""
+        l_status = c_int32(0)
+        spcm_dwGetParam_i32(self.h_card, regs.SPC_TIMESTAMP_STATUS, byref(l_status))
+        return l_status.value

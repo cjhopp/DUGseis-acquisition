@@ -169,6 +169,10 @@ def _apply_schema_defaults(param):
     timing.setdefault('timing_quality_source', 'fixed')
     timing.setdefault('timing_quality_fixed_value', 100)
 
+    hw_ts = timing.setdefault('hardware_timestamps', {})
+    hw_ts.setdefault('enabled', False)
+    hw_ts.setdefault('pps_sync_timeout_ms', 1500)
+
     total_channels = topology['card_count'] * topology['channels_per_card']
 
     # Keep backward compatibility: use legacy asdf_settings.reorder_channels if provided.
@@ -219,6 +223,8 @@ def _validate_schema_lengths(param):
         raise ValueError('topology.card_device_policy must be fixed_order or serial_map')
     if card_device_policy == 'serial_map' and len(topology.get('card_serial_map', [])) < topology['card_count']:
         raise ValueError('topology.card_serial_map must contain at least card_count entries when using serial_map policy')
+
+
 
 
 def _copy_config_file(param):
