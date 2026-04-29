@@ -50,11 +50,13 @@ Acquisition:
     enable_asdf              : false
 
   timing:
+    # System clock should be disciplined by linuxptp on eno2np1.
+    # Deployment runbook: config/ptp/README.md (GM target: 204.114.29.59).
     timestamp_source         : system_clock  # system_clock or ptp_system_clock
     timing_quality_source    : fixed         # fixed or ptp_status
     timing_quality_fixed_value: 100
     hardware_timestamps:
-      enabled                : false         # Enable Spectrum refclock timestamp engine
+      enabled                : true         # Enable Spectrum refclock timestamp engine
       pps_sync_timeout_ms    : 1500          # How long to wait for first PPS edge at startup
       # The PPS-receiving card is auto-detected as the StarHub clock master.
 

@@ -1,0 +1,14 @@
+[Unit]
+Description=DUG PHC2SYS service on %I
+After=dug-ptp4l@%I.service
+Requires=dug-ptp4l@%I.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/phc2sys-%I
+ExecStart=/usr/sbin/phc2sys $PHC2SYS_OPTS
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

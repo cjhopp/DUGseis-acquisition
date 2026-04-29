@@ -234,10 +234,12 @@ def run(param):
 
             now_diag = time.perf_counter()
             if now_diag - last_stream_diag_log >= 1.0:
+                _ts = stream_ts.starttime_UTCDateTime()
+                _wall_offset_ms = (UTCDateTime() - _ts) * 1000
                 logger.info(
-                    "stream-diag bytes_available={} min={} threshold={} packets_sent={} stream_ts={}"
+                    "stream-diag bytes_available={} min={} threshold={} packets_sent={} stream_ts={} wall_offset={:.0f}ms"
                     .format(bytes_available, min_bytes_available, bytes_per_stream_packet,
-                            packets_sent, stream_ts.starttime_UTCDateTime())
+                            packets_sent, _ts, _wall_offset_ms)
                 )
                 last_stream_diag_log = now_diag
 

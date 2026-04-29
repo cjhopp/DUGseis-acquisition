@@ -26,7 +26,7 @@ from ctypes import byref, c_int32, c_int64, POINTER, c_int16, cast, addressof, c
 if os.path.isfile("c:\\windows\\system32\\spcm_win64.dll") or os.path.isfile(
         "c:\\windows\\system32\\spcm_win32.dll"):
     from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card, pre_open_card as sdt_pre_open_card
-    from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_dwGetParam_i64, spcm_vClose
+    from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_dwGetParam_i64, spcm_vClose, spcm_dwGetErrorInfo_i32
 else:
     pass
     # logging at import messes with the later logging settings, no logging needed here
@@ -36,7 +36,7 @@ if os.name == 'posix':
     try:
         spcmDll = cdll.LoadLibrary("libspcm_linux.so")
         from dug_seis.acquisition.one_card_std_init import init_card as sdt_init_card, pre_open_card as sdt_pre_open_card
-        from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_dwGetParam_i64, spcm_vClose
+        from dug_seis.acquisition.hardware_driver.pyspcm import spcm_dwSetParam_i32, spcm_dwGetParam_i32, spcm_dwGetParam_i64, spcm_vClose, spcm_dwGetErrorInfo_i32
     except OSError as exception:
         print("linux card driver could not be loaded.")
         print(exception)
@@ -227,6 +227,10 @@ class Card:
         if dw_error != err.ERR_OK:
             logger.error("card {}: SPC_TS_RESET_WAITREFCLK failed with error 0x{:04x}".format(
                 self.card_nr, dw_error))
+            # Clear the error so it doesn't become ERR_LASTERR on the next driver call
+            from ctypes import create_string_buffer
+            _errbuf = create_string_buffer(256)
+            spcm_dwGetErrorInfo_i32(self.h_card, None, None, _errbuf)
             return -1
         logger.info("card {}: PPS sync completed".format(self.card_nr))
         return 0
