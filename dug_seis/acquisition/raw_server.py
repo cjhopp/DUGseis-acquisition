@@ -122,7 +122,10 @@ class Client:
         # If we don't do this and there is no data to be sent to the peer
         # we will never notice a closed connection initiated by the peer
         #
-        data = await self.reader.read(1)
+        try:
+            data = await self.reader.read(1)
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            return
         if data:
             logger.error(
                 f"Received unexpected data from peer {self.peername!r}")
@@ -136,56 +139,60 @@ class Client:
                 self.data_available.clear()
             if self.data:
                 data = self.data.pop(0)
-                #
-                # Send header
-                #
-                self.writer.write(
-                    data.time.year.to_bytes(length=2,
-                                            byteorder="big",
-                                            signed=False))
-                self.writer.write(data.time.timetuple().tm_yday.to_bytes(
-                    length=2, byteorder="big", signed=False))
-                self.writer.write(
-                    data.time.hour.to_bytes(length=1,
-                                            byteorder="big",
-                                            signed=False))
-                self.writer.write(
-                    data.time.minute.to_bytes(length=1,
-                                              byteorder="big",
-                                              signed=False))
-                self.writer.write(
-                    data.time.second.to_bytes(length=1,
-                                              byteorder="big",
-                                              signed=False))
-                self.writer.write(
-                    data.time.microsecond.to_bytes(length=4,
-                                                   byteorder="big",
-                                                   signed=False))
-                self.writer.write(
-                    data.time_quality.to_bytes(length=1,
-                                              byteorder="big",
-                                              signed=False))
-                self.writer.write(
-                    data.channel_id.to_bytes(length=2,
-                                             byteorder="big",
-                                             signed=False))
-                self.writer.write(
-                    data.num_samples.to_bytes(length=4,
-                                              byteorder="big",
-                                              signed=False))
+                try:
+                    #
+                    # Send header
+                    #
+                    self.writer.write(
+                        data.time.year.to_bytes(length=2,
+                                                byteorder="big",
+                                                signed=False))
+                    self.writer.write(data.time.timetuple().tm_yday.to_bytes(
+                        length=2, byteorder="big", signed=False))
+                    self.writer.write(
+                        data.time.hour.to_bytes(length=1,
+                                                byteorder="big",
+                                                signed=False))
+                    self.writer.write(
+                        data.time.minute.to_bytes(length=1,
+                                                  byteorder="big",
+                                                  signed=False))
+                    self.writer.write(
+                        data.time.second.to_bytes(length=1,
+                                                  byteorder="big",
+                                                  signed=False))
+                    self.writer.write(
+                        data.time.microsecond.to_bytes(length=4,
+                                                       byteorder="big",
+                                                       signed=False))
+                    self.writer.write(
+                        data.time_quality.to_bytes(length=1,
+                                                  byteorder="big",
+                                                  signed=False))
+                    self.writer.write(
+                        data.channel_id.to_bytes(length=2,
+                                                 byteorder="big",
+                                                 signed=False))
+                    self.writer.write(
+                        data.num_samples.to_bytes(length=4,
+                                                  byteorder="big",
+                                                  signed=False))
 
-                # logger.debug(f"Sending {data.num_samples} samples from channel "
-                #        f"{data.channel_id} (year {data.time.year} day "
-                #        f"{data.time.timetuple().tm_yday} hour "
-                #        f"{data.time.hour} min {data.time.minute} sec "
-                #        f"{data.time.second} usec {data.time.microsecond})")
+                    # logger.debug(f"Sending {data.num_samples} samples from channel "
+                    #        f"{data.channel_id} (year {data.time.year} day "
+                    #        f"{data.time.timetuple().tm_yday} hour "
+                    #        f"{data.time.hour} min {data.time.minute} sec "
+                    #        f"{data.time.second} usec {data.time.microsecond})")
 
-                #
-                # Send samples
-                #
-                self.writer.write(data.samples)
+                    #
+                    # Send samples
+                    #
+                    self.writer.write(data.samples)
 
-                await self.writer.drain()
+                    await self.writer.drain()
+                except (ConnectionResetError, ConnectionAbortedError,
+                        BrokenPipeError, AttributeError):
+                    return
 
 
 class Channel:
