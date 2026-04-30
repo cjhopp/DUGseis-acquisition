@@ -1,9 +1,15 @@
 #!/bin/bash
 # copy_scautopick_alias_configs.sh
 #
-# Copies the scautopick module config and binding profile from a source alias
-# to all other scautopick aliases found in the SeisComP key directory, and
-# adds the scautopick binding line to each corresponding station key file.
+# Creates one scautopick alias per channel (Z/X/Y) for each 3-component station,
+# registers the aliases with SeisComP, writes per-channel module configs with
+# streams.whitelist, and updates station key files.
+#
+# Layout produced:
+#   scautopick_AML1Z  streams.whitelist = CB.AML1..XNZ
+#   scautopick_AML1X  streams.whitelist = CB.AML1..XNX
+#   scautopick_AML1Y  streams.whitelist = CB.AML1..XNY
+#   ... (48 aliases total for 16 stations)
 #
 # Usage: DRY_RUN=1 ./copy_scautopick_alias_configs.sh   # preview only
 #        ./copy_scautopick_alias_configs.sh              # apply changes
@@ -11,86 +17,89 @@
 set -euo pipefail
 
 SEISCOMP_ETC="/home/sysop/seiscomp/etc"
-SOURCE_SUFFIX="AML1"
+SEISCOMP_BIN="/home/sysop/seiscomp/bin/seiscomp"
+KEY_DIR="${SEISCOMP_ETC}/key"
+NET="CB"
 PROFILE_NAME="cussp"
+PRIMARY_GROUP="UNFILTERED_PICK"
 DRY_RUN="${DRY_RUN:-0}"
 
-SOURCE_ALIAS="scautopick_${SOURCE_SUFFIX}"
-SOURCE_CFG="${SEISCOMP_ETC}/${SOURCE_ALIAS}.cfg"
-SOURCE_PROFILE="${SEISCOMP_ETC}/key/${SOURCE_ALIAS}/profile_${PROFILE_NAME}"
+STATIONS=(AML1 AML2 AML3 AML4 AMU1 AMU2 AMU3 AMU4 DML1 DML2 DML3 DML4 DMU1 DMU2 DMU3 DMU4)
+declare -A CHA_SUFFIX=(["XNZ"]="Z" ["XNX"]="X" ["XNY"]="Y")
+CHANNELS=(XNZ XNX XNY)
 
-for f in "$SOURCE_CFG" "$SOURCE_PROFILE"; do
-    if [[ ! -f "$f" ]]; then
-        echo "ERROR: Source file not found: $f" >&2
-        exit 1
-    fi
-done
+PROFILE_CONTENT='# Defines the filter to be used for picking.
+detecFilter = "RMHP(0.001)>>ITAPER(0.002)>>BW(4,1000,12000)>>STALTA(0.002,0.05)"
 
-echo "Source : ${SOURCE_ALIAS}  profile=${PROFILE_NAME}  dry_run=${DRY_RUN}"
+# For which value on the filtered waveform is a pick detected.
+trigOn = 4
+'
+
+echo "dry_run=${DRY_RUN}"
 echo ""
 
-shopt -s nullglob
-alias_dirs=( "${SEISCOMP_ETC}/key/scautopick_"*/ )
+for sta in "${STATIONS[@]}"; do
+    for cha in "${CHANNELS[@]}"; do
+        comp="${CHA_SUFFIX[$cha]}"
+        alias_name="scautopick_${sta}${comp}"
+        profile_dir="${KEY_DIR}/${alias_name}"
+        cfg_path="${SEISCOMP_ETC}/${alias_name}.cfg"
 
-for alias_dir in "${alias_dirs[@]}"; do
-    alias_name=$(basename "$alias_dir")
-    target_suffix="${alias_name#scautopick_}"
+        echo "${alias_name}  (${NET}.${sta}..${cha})"
 
-    [[ "$alias_name" == "$SOURCE_ALIAS" ]] && continue
-
-    echo "${alias_name}"
-
-    target_cfg="${SEISCOMP_ETC}/${alias_name}.cfg"
-    target_profile="${SEISCOMP_ETC}/key/${alias_name}/profile_${PROFILE_NAME}"
-    binding_line="${alias_name}:${PROFILE_NAME}"
-
-    # 1. Module config
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-        echo "  [dry] cp -> ${target_cfg}"
-    else
-        cp "$SOURCE_CFG" "$target_cfg"
-        echo "  module cfg copied"
-    fi
-
-    # 2. Binding profile
-    if [[ "$DRY_RUN" -eq 1 ]]; then
-        echo "  [dry] cp -> ${target_profile}"
-    else
-        cp "$SOURCE_PROFILE" "$target_profile"
-        echo "  binding profile copied"
-    fi
-
-    # 3. Station key file — insert or replace scautopick binding
-    mapfile -t station_keys < <(
-        find "${SEISCOMP_ETC}/key" -maxdepth 1 -name "station_*_${target_suffix}" -type f
-    )
-
-    if [[ ${#station_keys[@]} -eq 0 ]]; then
-        echo "  WARNING: no station_*_${target_suffix} key file found — skipping"
-        continue
-    fi
-
-    for station_key in "${station_keys[@]}"; do
-        key_basename=$(basename "$station_key")
-        if grep -q "^scautopick_" "$station_key"; then
-            # Replace existing (wrong) scautopick binding
+        # 1. Register alias if not already registered
+        if [[ ! -f "${SEISCOMP_ETC}/init/${alias_name}.py" ]]; then
             if [[ "$DRY_RUN" -eq 1 ]]; then
-                echo "  [dry] replace scautopick line in ${key_basename} -> ${binding_line}"
+                echo "  [dry] seiscomp alias create ${alias_name} scautopick"
             else
-                sed -i "s|^scautopick_.*|${binding_line}|" "$station_key"
-                echo "  scautopick binding replaced in ${key_basename}"
+                "$SEISCOMP_BIN" alias create "${alias_name}" scautopick
+                echo "  alias registered"
             fi
+        fi
+
+        # 2. Binding profile
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+            echo "  [dry] write ${profile_dir}/profile_${PROFILE_NAME}"
         else
-            # Insert after the global: line (mirrors station_CB_AML1 order)
+            mkdir -p "${profile_dir}"
+            printf '%s' "$PROFILE_CONTENT" > "${profile_dir}/profile_${PROFILE_NAME}"
+            echo "  binding profile written"
+        fi
+
+        # 3. Module config with streams.whitelist
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+            echo "  [dry] write ${cfg_path}"
+        else
+            cat > "${cfg_path}" <<EOF
+connection.primaryGroup = ${PRIMARY_GROUP}
+useAllStreams = true
+streams.whitelist = ${NET}.${sta}..${cha}
+EOF
+            echo "  module cfg written"
+        fi
+
+        # 4. Station key file — ensure all 3 per-channel bindings present
+        station_key="${KEY_DIR}/station_${NET}_${sta}"
+        if [[ ! -f "$station_key" ]]; then
+            echo "  WARNING: ${station_key} not found — skipping"
+            continue
+        fi
+        binding_line="${alias_name}:${PROFILE_NAME}"
+        if grep -q "^${alias_name}:" "$station_key"; then
+            echo "  binding already in $(basename $station_key)"
+        else
             if [[ "$DRY_RUN" -eq 1 ]]; then
-                echo "  [dry] insert '${binding_line}' after global: in ${key_basename}"
+                echo "  [dry] add '${binding_line}' to $(basename $station_key)"
             else
                 sed -i "/^global:/a ${binding_line}" "$station_key"
-                echo "  scautopick binding added to ${key_basename}"
+                echo "  binding added to $(basename $station_key)"
             fi
         fi
     done
 done
 
 echo ""
-echo "Done."
+echo "Done. Now run:"
+echo "  seiscomp update-config"
+echo "  seiscomp enable scautopick_AML1Z scautopick_AML1X ...  (or all 48)"
+echo "  seiscomp start scautopick"
