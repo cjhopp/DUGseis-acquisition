@@ -72,8 +72,9 @@ for sta in "${STATIONS[@]}"; do
         else
             cat > "${cfg_path}" <<EOF
 connection.primaryGroup = ${PRIMARY_GROUP}
-useAllStreams = true
+useAllStreams = false
 streams.whitelist = ${NET}.${sta}..${cha}
+ringBufferSize = 1
 EOF
             echo "  module cfg written"
         fi
