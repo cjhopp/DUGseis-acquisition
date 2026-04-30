@@ -57,7 +57,11 @@ Acquisition:
     timing_quality_fixed_value: 100
     hardware_timestamps:
       enabled                : true         # Enable Spectrum refclock timestamp engine
-      pps_sync_timeout_ms    : 1500          # How long to wait for first PPS edge at startup
+      pps_sync_timeout_ms    : 2500          # How long to wait for first PPS edge at startup
+      pps_edge_polarity      : negative      # positive (rising) or negative (falling) edge
+      # Most GPS/GNSS receivers output an active-low PPS (open-drain pull-down)
+      # which gives a falling edge — use negative.  A 3.3V push-pull rising-edge
+      # source uses positive.
       # The PPS-receiving card is auto-detected as the StarHub clock master.
 
   channel_map:

@@ -221,22 +221,22 @@ class Card:
 
         Returns 0 on success, -1 on error/timeout.
         """
-        # Drain any stale error left on the handle by init_card (e.g. from a register
-        # write that is not supported by this firmware revision).  If an error is
-        # pending, the very first driver call on this handle returns ERR_LASTERR
-        # (0x0101) instead of executing the requested command.
+        # Drain any stale error left on the card handle before issuing the blocking
+        # wait command.  If an error is pending, the first driver call returns
+        # ERR_LASTERR (0x0010) instead of executing the requested command.
         from ctypes import create_string_buffer as _csb
         _drain_buf = _csb(256)
-        spcm_dwGetErrorInfo_i32(self.h_card, None, None, _drain_buf)
+        drain_rc = spcm_dwGetErrorInfo_i32(self.h_card, None, None, _drain_buf)
+        if drain_rc != err.ERR_OK:
+            logger.info("card {}: drained pending error before PPS wait: 0x{:04x} {}".format(
+                self.card_nr, drain_rc, _drain_buf.value))
 
         logger.info("card {}: waiting for PPS edge (SPC_TS_RESET_WAITREFCLK)...".format(self.card_nr))
-        # OR in the persistent mode+TSCNT bits alongside the command bit so the
-        # TSCNT field is not cleared to zero (which would mean no refclock source).
-        ts_wait_cmd = (regs.SPC_TS_RESET_WAITREFCLK
-                       | regs.SPC_TSMODE_STANDARD
-                       | regs.SPC_TSCNT_REFCLOCKPOS)
+        # Write ONLY the command bit (0x008).  The mode/TSCNT bits (STANDARD |
+        # REFCLOCKPOS = 0x202) were already set during init_card.  The firmware
+        # rejects combined mode+command writes with ERR_VALUE (0x0101).
         dw_error = spcm_dwSetParam_i32(
-            self.h_card, regs.SPC_TIMESTAMP_CMD, ts_wait_cmd)
+            self.h_card, regs.SPC_TIMESTAMP_CMD, regs.SPC_TS_RESET_WAITREFCLK)
         if dw_error != err.ERR_OK:
             logger.error("card {}: SPC_TS_RESET_WAITREFCLK failed with error 0x{:04x}".format(
                 self.card_nr, dw_error))
@@ -252,9 +252,9 @@ class Card:
         """Read the hardware-latched start date and time after a PPS sync.
 
         Returns (startdate, starttime) as raw 32-bit integers, or (None, None) on error.
-        Spectrum encoding:
-          - SPC_TIMESTAMP_STARTDATE: YYYYMMDD integer (e.g. 20260408)
-          - SPC_TIMESTAMP_STARTTIME: seconds since midnight * 1000 (millisecond resolution)
+        Spectrum encoding (bit-packed, refclock mode):
+          - SPC_TIMESTAMP_STARTDATE: bits 16-31 = year, bits 8-15 = month, bits 0-7 = day
+          - SPC_TIMESTAMP_STARTTIME: bits 16-23 = hours, bits 8-15 = minutes, bits 0-7 = seconds
         """
         l_date = c_int32(0)
         l_time = c_int32(0)

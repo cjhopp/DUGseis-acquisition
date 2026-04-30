@@ -20,26 +20,28 @@ logger = logging.getLogger('dug-seis')
 
 
 def decode_spectrum_startdate(raw_date):
-    """Decode SPC_TIMESTAMP_STARTDATE from YYYYMMDD integer.
+    """Decode SPC_TIMESTAMP_STARTDATE.
+
+    Spectrum API (refclock mode): year in bits 16-31, month in bits 8-15,
+    day-of-month in bits 0-7.
 
     Args:
-        raw_date: Integer read from SPC_TIMESTAMP_STARTDATE (e.g. 20260408).
+        raw_date: Integer read from SPC_TIMESTAMP_STARTDATE.
 
     Returns:
         Tuple (year, month, day).
     """
-    year = raw_date // 10000
-    month = (raw_date % 10000) // 100
-    day = raw_date % 100
+    year  = (raw_date >> 16) & 0xFFFF
+    month = (raw_date >> 8)  & 0xFF
+    day   =  raw_date        & 0xFF
     return year, month, day
 
 
 def decode_spectrum_starttime(raw_time):
     """Decode SPC_TIMESTAMP_STARTTIME.
 
-    The Spectrum driver stores the time-of-day as seconds since midnight
-    (integer).  Sub-second precision is not available from this register;
-    the PPS edge defines the exact second boundary.
+    Spectrum API (refclock mode): hours in bits 16-23, minutes in bits 8-15,
+    seconds in bits 0-7.
 
     Args:
         raw_time: Integer read from SPC_TIMESTAMP_STARTTIME.
@@ -47,10 +49,9 @@ def decode_spectrum_starttime(raw_time):
     Returns:
         Tuple (hour, minute, second).
     """
-    total_seconds = raw_time
-    hour = total_seconds // 3600
-    minute = (total_seconds % 3600) // 60
-    second = total_seconds % 60
+    hour   = (raw_time >> 16) & 0xFF
+    minute = (raw_time >> 8)  & 0xFF
+    second =  raw_time        & 0xFF
     return hour, minute, second
 
 

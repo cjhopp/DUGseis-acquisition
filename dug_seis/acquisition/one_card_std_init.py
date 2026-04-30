@@ -317,8 +317,15 @@ def init_card(param, card_nr, h_card=None, device_path=None):
     # valid timestamps, and only it will have pps_sync() / read_pps_start_time() called.
     hw_ts = param['Acquisition'].get('timing', {}).get('hardware_timestamps', {})
     if hw_ts.get('enabled', False):
-        ts_timeout_ms = int(hw_ts.get('pps_sync_timeout_ms', 1500))
-        ts_mode = regs.SPC_TSMODE_STANDARD | regs.SPC_TSCNT_REFCLOCKPOS
+        ts_timeout_ms = int(hw_ts.get('pps_sync_timeout_ms', 2500))
+        pps_polarity = hw_ts.get('pps_edge_polarity', 'positive').strip().lower()
+        if pps_polarity == 'negative':
+            tscnt_bit = regs.SPC_TSCNT_REFCLOCKNEG
+            polarity_label = 'REFCLOCKNEG'
+        else:
+            tscnt_bit = regs.SPC_TSCNT_REFCLOCKPOS
+            polarity_label = 'REFCLOCKPOS'
+        ts_mode = regs.SPC_TSMODE_STANDARD | tscnt_bit
         dw_error = spcm_dwSetParam_i32(h_card, regs.SPC_TIMESTAMP_CMD, ts_mode)
         if dw_error != spcerr.ERR_OK:
             sz_error_text_buffer = create_string_buffer(regs.ERRORTEXTLEN)
@@ -326,8 +333,8 @@ def init_card(param, card_nr, h_card=None, device_path=None):
             logger.error("card {}: SPC_TIMESTAMP_CMD mode 0x{:x} error: {}".format(
                 card_nr, ts_mode, sz_error_text_buffer.value))
         else:
-            logger.info("card {}: timestamp engine configured: mode=0x{:x} (STANDARD|REFCLOCKPOS)".format(
-                card_nr, ts_mode))
+            logger.info("card {}: timestamp engine configured: mode=0x{:x} (STANDARD|{})".format(
+                card_nr, ts_mode, polarity_label))
 
         spcm_dwSetParam_i32(h_card, regs.SPC_TIMESTAMP_TIMEOUT, ts_timeout_ms)
         logger.info("card {}: timestamp PPS sync timeout set to {} ms".format(card_nr, ts_timeout_ms))

@@ -15,6 +15,7 @@ import yaml
 import logging
 import os
 import datetime
+import subprocess
 import numpy as np
 from logging.handlers import RotatingFileHandler
 from dug_seis.acquisition.acquisition import acquisition_ as acquisition_function
@@ -67,6 +68,11 @@ def cli(ctx, cfg, verbose, mode, log):
     logger.addHandler(fh)
     logger.info('DUG-Seis started')
     # Load config file and set the context for the subcommand
+    # ptp-status does not need a config file — skip loading entirely
+    if ctx.invoked_subcommand == 'ptp-status':
+        ctx.obj = {}
+        return
+
     search = [cfg or '', 'dug-seis.yaml', 'config/dug-seis.yaml']
     cfg_path = next((p for p in search if os.path.exists(p)), None)
     if not cfg_path:
@@ -189,3 +195,90 @@ def write_file(ctx, duration, out):
 
     out_dir = out or os.getcwd()
     run_write_file(param, duration, out_dir)
+
+
+@cli.command(name='ptp-status', context_settings=dict(max_content_width=120))
+def ptp_status():
+    """Check PTP discipline chain status (ptp4l, phc2sys, system clock).
+
+    Does not require a config file. Exits with code 1 if any check fails.
+    """
+    import re, sys
+
+    ok = True
+
+    def _run(cmd):
+        try:
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
+            return r.stdout + r.stderr
+        except Exception as e:
+            return str(e)
+
+    def _service_state(name):
+        out = _run(f'systemctl is-active {name}')
+        return out.strip()
+
+    def _last_lines(unit, n=5):
+        return _run(f'journalctl -u {unit} -n {n} --no-pager -o short-monotonic')
+
+    # 1. ptp4l
+    ptp4l_state = _service_state('dug-ptp4l@eno2np1.service')
+    ptp4l_ok = ptp4l_state == 'active'
+    click.echo(f"[{'OK' if ptp4l_ok else 'FAIL'}] ptp4l service: {ptp4l_state}")
+
+    if ptp4l_ok:
+        ptp4l_log = _last_lines('dug-ptp4l@eno2np1.service', 15)
+        # In steady state the log only shows rms lines — that IS slave state.
+        rms_match = re.search(r'rms\s+(\d+)\s+max\s+(\d+)', ptp4l_log)
+        slave_transition = 'to SLAVE' in ptp4l_log
+        if rms_match:
+            click.echo(f"  [OK] PHC locked to grandmaster  rms={rms_match.group(1)}ns  max={rms_match.group(2)}ns")
+        elif slave_transition:
+            click.echo(f"  [OK] PHC locked to grandmaster (SLAVE state confirmed)")
+        else:
+            click.secho("  [WARN] ptp4l running but no rms stats found — may not be locked yet", fg='yellow')
+            ok = False
+    else:
+        ok = False
+
+    # 2. phc2sys
+    phc2sys_state = _service_state('dug-phc2sys@eno2np1.service')
+    phc2sys_ok = phc2sys_state == 'active'
+    click.echo(f"[{'OK' if phc2sys_ok else 'FAIL'}] phc2sys service: {phc2sys_state}")
+
+    if phc2sys_ok:
+        phc_log = _last_lines('dug-phc2sys@eno2np1.service', 10)
+        s2_match = re.search(r'phc offset\s+([-\d]+)\s+(s\d)\s+freq\s+([-+\d]+)', phc_log)
+        if s2_match:
+            offset_ns, servo, freq = s2_match.group(1), s2_match.group(2), s2_match.group(3)
+            servo_ok = servo == 's2'
+            click.echo(f"  [{'OK' if servo_ok else 'WARN'}] CLOCK_REALTIME servo={servo}  offset={offset_ns}ns  freq={freq}ppb")
+            if not servo_ok:
+                click.secho("  [WARN] servo not in s2 (actively steering) — still converging", fg='yellow')
+                ok = False
+        else:
+            click.secho("  [WARN] no phc offset line found — phc2sys may not have locked yet", fg='yellow')
+            ok = False
+    else:
+        ok = False
+
+    # 3. Competing NTP daemons
+    for daemon in ('chrony', 'systemd-timesyncd', 'ntp'):
+        state = _service_state(daemon)
+        if state == 'active':
+            click.secho(f"[WARN] {daemon} is active — may fight phc2sys over CLOCK_REALTIME", fg='yellow')
+            ok = False
+
+    # 4. System clock sync source
+    tc = _run('timedatectl show')
+    ntp_sync = re.search(r'NTPSynchronized=(\w+)', tc)
+    if ntp_sync and ntp_sync.group(1) == 'yes':
+        click.echo(f"  [OK] kernel clock discipline active (set by phc2sys)")
+
+    # Summary
+    click.echo()
+    if ok:
+        click.secho("PTP discipline chain: HEALTHY", fg='green', bold=True)
+    else:
+        click.secho("PTP discipline chain: DEGRADED — see warnings above", fg='red', bold=True)
+        sys.exit(1)

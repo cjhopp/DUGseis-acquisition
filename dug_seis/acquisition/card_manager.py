@@ -236,10 +236,15 @@ def run(param):
             if now_diag - last_stream_diag_log >= 1.0:
                 _ts = stream_ts.starttime_UTCDateTime()
                 _wall_offset_ms = (UTCDateTime() - _ts) * 1000
+                # buffer_depth: how many ms of unread samples are sitting in the
+                # DMA ring right now.  0 = fully caught up; growing = software lag.
+                # (16-bit samples → 2 bytes/sample/channel)
+                _buf_depth_ms = min_bytes_available / (channels_per_card * card_count * 2) / sampling_frequency * 1000
                 logger.info(
-                    "stream-diag bytes_available={} min={} threshold={} packets_sent={} stream_ts={} wall_offset={:.0f}ms"
+                    "stream-diag bytes_available={} min={} threshold={} packets_sent={}"
+                    " stream_ts={} wall_offset={:.0f}ms buffer_depth={:.0f}ms"
                     .format(bytes_available, min_bytes_available, bytes_per_stream_packet,
-                            packets_sent, _ts, _wall_offset_ms)
+                            packets_sent, _ts, _wall_offset_ms, _buf_depth_ms)
                 )
                 last_stream_diag_log = now_diag
 

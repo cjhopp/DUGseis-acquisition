@@ -29,7 +29,14 @@ If UDPv4 does not lock, switch to Layer-2 profile:
 
 sudo cp config/ptp/ptp4l-eno2np1-l2.conf /etc/linuxptp/ptp4l-eno2np1.conf
 
-## 4) Deploy services
+## 4) Disable competing NTP/chrony daemons
+
+chrony and NTP will fight phc2sys over CLOCK_REALTIME. Disable them:
+
+sudo systemctl disable --now chrony chronyd systemd-timesyncd || true
+sudo timedatectl set-ntp false
+
+## 5) Deploy services
 
 sudo cp config/systemd/dug-ptp4l@.service /etc/systemd/system/
 sudo cp config/systemd/dug-phc2sys@.service /etc/systemd/system/
@@ -41,7 +48,7 @@ sudo systemctl enable dug-phc2sys@eno2np1.service
 sudo systemctl start dug-ptp4l@eno2np1.service
 sudo systemctl start dug-phc2sys@eno2np1.service
 
-## 5) Verify lock and discipline
+## 6) Verify lock and discipline
 
 Check service status:
 
@@ -61,7 +68,7 @@ sudo tcpdump -ni eno2np1 ether proto 0x88f7
 If only UDP packets appear, use UDPv4 profile.
 If EtherType 0x88f7 appears and UDP does not, use Layer-2 profile.
 
-## 6) DUGseis alignment
+## 7) DUGseis alignment
 
 In DUGseis YAML:
 - timing.timestamp_source: system_clock
