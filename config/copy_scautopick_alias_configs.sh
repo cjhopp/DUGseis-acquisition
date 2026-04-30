@@ -32,7 +32,7 @@ PROFILE_CONTENT='# Defines the filter to be used for picking.
 detecFilter = "RMHP(0.001)>>ITAPER(0.002)>>BW(4,1000,12000)>>STALTA(0.002,0.05)"
 
 # For which value on the filtered waveform is a pick detected.
-trigOn = 4
+trigOn = 3
 '
 
 echo "dry_run=${DRY_RUN}"
@@ -75,6 +75,12 @@ connection.primaryGroup = ${PRIMARY_GROUP}
 useAllStreams = false
 streams.whitelist = ${NET}.${sta}..${cha}
 ringBufferSize = 1
+timeCorrection = 0
+initTime = 1
+leadTime = 2
+thresholds.deadTime = 0.05
+thresholds.amplMaxTimeWindow = 0.05
+thresholds.maxGapLength = 1.0
 EOF
             echo "  module cfg written"
         fi
