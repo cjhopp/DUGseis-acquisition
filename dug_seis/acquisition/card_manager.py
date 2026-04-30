@@ -260,7 +260,17 @@ def run(param):
 
                         t_stream += time.perf_counter() - _tref
                 else:
-                    while min_bytes_available >= bytes_per_stream_packet:
+                    # Re-query hardware bytes on every iteration: the Spectrum FIFO
+                    # USER_LEN register is only updated in notify_size chunks and may
+                    # not decrease immediately after SPC_DATA_AVAIL_CARD_LEN.  Using
+                    # a stale outer-loop snapshot with a local decrement can cause the
+                    # inner loop to fire many more times than there is real data,
+                    # advancing stream_ts far into the future and eventually stalling
+                    # the DMA (overaggressive free calls confuse the ring buffer).
+                    while True:
+                        fresh_min = min(card.nr_of_bytes_available() for card in cards)
+                        if fresh_min < bytes_per_stream_packet:
+                            break
                         _tref = time.perf_counter()
 
                         cards_data = [card.read_data(bytes_per_stream_packet, 0) for card in cards]
@@ -269,7 +279,6 @@ def run(param):
                         packets_sent += 1
                         for card in cards:
                             card.data_has_been_read(bytes_per_stream_packet)
-                        min_bytes_available -= bytes_per_stream_packet
 
                         t_stream += time.perf_counter() - _tref
 

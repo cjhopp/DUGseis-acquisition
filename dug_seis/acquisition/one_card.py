@@ -221,9 +221,22 @@ class Card:
 
         Returns 0 on success, -1 on error/timeout.
         """
+        # Drain any stale error left on the handle by init_card (e.g. from a register
+        # write that is not supported by this firmware revision).  If an error is
+        # pending, the very first driver call on this handle returns ERR_LASTERR
+        # (0x0101) instead of executing the requested command.
+        from ctypes import create_string_buffer as _csb
+        _drain_buf = _csb(256)
+        spcm_dwGetErrorInfo_i32(self.h_card, None, None, _drain_buf)
+
         logger.info("card {}: waiting for PPS edge (SPC_TS_RESET_WAITREFCLK)...".format(self.card_nr))
+        # OR in the persistent mode+TSCNT bits alongside the command bit so the
+        # TSCNT field is not cleared to zero (which would mean no refclock source).
+        ts_wait_cmd = (regs.SPC_TS_RESET_WAITREFCLK
+                       | regs.SPC_TSMODE_STANDARD
+                       | regs.SPC_TSCNT_REFCLOCKPOS)
         dw_error = spcm_dwSetParam_i32(
-            self.h_card, regs.SPC_TIMESTAMP_CMD, regs.SPC_TS_RESET_WAITREFCLK)
+            self.h_card, regs.SPC_TIMESTAMP_CMD, ts_wait_cmd)
         if dw_error != err.ERR_OK:
             logger.error("card {}: SPC_TS_RESET_WAITREFCLK failed with error 0x{:04x}".format(
                 self.card_nr, dw_error))

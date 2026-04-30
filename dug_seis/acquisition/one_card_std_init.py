@@ -331,6 +331,11 @@ def init_card(param, card_nr, h_card=None, device_path=None):
 
         spcm_dwSetParam_i32(h_card, regs.SPC_TIMESTAMP_TIMEOUT, ts_timeout_ms)
         logger.info("card {}: timestamp PPS sync timeout set to {} ms".format(card_nr, ts_timeout_ms))
+        # Note: edge polarity is already set by SPC_TSCNT_REFCLOCKPOS in ts_mode above.
+        # SPC_TIMESTAMP_RESETMODE is not used here — it is an older API that is not
+        # reliably supported on M2p hardware and writing it can leave a stale error on
+        # the card handle that causes the subsequent SPC_TS_RESET_WAITREFCLK call to
+        # return ERR_LASTERR (0x0101) instead of actually waiting for the PPS edge.
 
     # set sample rate (SPC_SAMPLERATE is a 64-bit register — use i64 variant)
     spcm_dwSetParam_i64(h_card, regs.SPC_SAMPLERATE, sampling_frequency)
