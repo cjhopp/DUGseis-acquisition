@@ -43,7 +43,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/gmf/DUGseis-acquisition
-ExecStart=/home/gmf/miniconda3/bin/dug-seis \
+ExecStart=/home/gmf/miniconda3/envs/dug_seis_acquisition/bin/dug-seis \
           --cfg /home/gmf/DUGseis-acquisition/config/dug-seis.yaml \
           acquisition
 Restart=always

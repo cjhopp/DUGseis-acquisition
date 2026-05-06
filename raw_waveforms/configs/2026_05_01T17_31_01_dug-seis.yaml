@@ -1,0 +1,100 @@
+# DUG-Seis parameter file
+#
+# :copyright:
+#    ETH Zurich, Switzerland
+# :license:
+#    GNU Lesser General Public License, Version 3
+#    (https://www.gnu.org/copyleft/lesser.html)
+#
+
+Version                       : 3
+General:
+  project_name                : CUSSP_commissioning
+  project_location            : SURF
+  operator                    : ['Chet Hopp']
+  project_description         : CUSSP commissioning
+  acquisition_folder          : ./raw_waveforms
+
+  stats:
+    sensor_codes              : ['XB.0X.01.001', 'XB.0X.02.001', 'XB.0X.03.001', 'XB.0X.04.001',
+                                 'XB.0X.05.001', 'XB.0X.06.001', 'XB.0X.07.001', 'XB.0X.08.001',
+                                 'XB.0X.09.001', 'XB.0X.10.001', 'XB.0X.11.001', 'XB.0X.12.001',
+                                 'XB.0X.13.001', 'XB.0X.14.001', 'XB.0X.15.001', 'XB.0X.16.001',
+                                 'XB.0X.17.001', 'XB.0X.18.001', 'XB.0X.19.001', 'XB.0X.20.001',
+                                 'XB.0X.21.001', 'XB.0X.22.001', 'XB.0X.23.001', 'XB.0X.24.001',
+                                 'XB.0X.25.001', 'XB.0X.26.001', 'XB.0X.27.001', 'XB.0X.28.001',
+                                 'XB.0X.29.001', 'XB.0X.30.001', 'XB.0X.31.001', 'XB.0X.32.001',
+                                 'XB.0X.33.001', 'XB.0X.34.001', 'XB.0X.35.001', 'XB.0X.36.001',
+                                 'XB.0X.37.001', 'XB.0X.38.001', 'XB.0X.39.001', 'XB.0X.40.001',
+                                 'XB.0X.41.001', 'XB.0X.42.001', 'XB.0X.43.001', 'XB.0X.44.001',
+                                 'XB.0X.45.001', 'XB.0X.46.001', 'XB.0X.47.001', 'XB.0X.48.001',
+                                 'XB.0X.49.001', 'XB.0X.50.001', 'XB.0X.51.001', 'XB.0X.52.001',
+                                 'XB.0X.53.001', 'XB.0X.54.001', 'XB.0X.55.001', 'XB.0X.56.001',
+                                 'XB.0X.57.001', 'XB.0X.58.001', 'XB.0X.59.001', 'XB.0X.60.001',
+                                 'XB.0X.61.001', 'XB.0X.62.001', 'XB.0X.63.001', 'XB.0X.64.001']
+
+Acquisition:
+  topology:
+    card_count               : 8
+    channels_per_card        : 8
+    trigger_card_index       : 5
+    sync_strategy            : star_hub      # star_hub or none
+    card_device_policy       : fixed_order   # fixed_order or serial_map
+    card_device_map          : ['/dev/spcm0', '/dev/spcm1', '/dev/spcm2', '/dev/spcm3', '/dev/spcm4', '/dev/spcm5', '/dev/spcm6', '/dev/spcm7']
+    card_serial_map          : [24916, 24917, 24918, 24920, 24914, 24913, 24915, 24919]            # e.g. [12345, 12346], required for serial_map policy
+    device_scan_limit        : 8            # /dev/spcm0..N scanned when serial_map is enabled
+
+  output:
+    mode                     : streaming_only          # streaming_only, asdf_only, both
+    enable_streaming         : true
+    enable_asdf              : false
+
+  timing:
+    # System clock should be disciplined by linuxptp on eno2np1.
+    # Deployment runbook: config/ptp/README.md (GM target: 204.114.29.59).
+    timestamp_source         : system_clock  # system_clock or ptp_system_clock
+    timing_quality_source    : fixed         # fixed or ptp_status
+    timing_quality_fixed_value: 100
+    hardware_timestamps:
+      enabled                : true         # Enable Spectrum refclock timestamp engine
+      pps_sync_timeout_ms    : 2500          # How long to wait for first PPS edge at startup
+      pps_edge_polarity      : negative      # positive (rising) or negative (falling) edge
+      # Most GPS/GNSS receivers output an active-low PPS (open-drain pull-down)
+      # which gives a falling edge — use negative.  A 3.3V push-pull rising-edge
+      # source uses positive.
+      # The PPS-receiving card is auto-detected as the StarHub clock master.
+
+  channel_map:
+    reorder_channels         : [1, 2, 3, 4, 5, 6, 7, 8,
+                                9, 10, 11, 12, 13, 14, 15, 16,
+                                17, 18, 19, 20, 21, 22, 23, 24,
+                                25, 26, 27, 28, 29, 30, 31, 32,
+                                33, 34, 35, 36, 37, 38, 39, 40,
+                                41, 42, 43, 44, 45, 46, 47, 48,
+                                49, 50, 51, 52, 53, 54, 55, 56,
+                                57, 58, 59, 60, 61, 62, 63, 64]
+
+  hardware_settings:
+    # vertical_resolution       : 16 # bit
+    wait_for_trigger          : false
+    external_clock            : false
+    clock_source              : intpll  # intpll, external_sample_clock, external_reference_clock
+    reference_clock_hz        : 200000
+    clock_termination_50ohm   : true
+    sampling_frequency        : 200000
+    input_range: [200, 200, 200, 200, 200, 200, 200, 200,
+                  200, 200, 200, 200, 200, 200, 200, 200,
+                  200, 200, 200, 200, 200, 200, 200, 200,
+                  200, 200, 200, 200, 200, 200, 200, 200,
+                  200, 200, 200, 200, 200, 200, 200, 200,
+                  200, 200, 200, 200, 200, 200, 200, 200,
+                  200, 200, 200, 200, 200, 200, 200, 200,
+                  200, 200, 200, 200, 200, 200, 200, 200] # +/- mV input range
+  asdf_settings:
+    compression               : gzip-3
+    file_length_sec           : 10.0
+
+  streaming_servers:
+    -   bind_to               : "" # emtpy means all interfaces/ip addresses
+        port                  : 65535
+        channels              : [1-64]
